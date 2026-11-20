@@ -68,6 +68,29 @@ export interface InvestmentSale {
 }
 export type NewInvestmentSale = Omit<InvestmentSale, "id">;
 
+// A tracked habit with the dates it was checked in. Mirrors the Go habit.Habit
+// type. Checkins are "YYYY-MM-DD" strings; color is a hex accent like "#dc2626".
+// Frequency is the schedule: "daily", "weekly" (once a week) or "weekdays" (on
+// the specific weekdays in `weekdays`, 0=Sun..6=Sat).
+export type HabitFrequency = "daily" | "weekly" | "weekdays";
+
+export interface Habit {
+  id: number;
+  name: string;
+  category: string;
+  color: string;
+  frequency: HabitFrequency;
+  weekdays: number[];
+  checkins: string[];
+}
+
+// What the client sends to create or update a habit: just the editable fields
+// (the server assigns the id and owns the check-ins).
+export type NewHabit = Pick<
+  Habit,
+  "name" | "category" | "color" | "frequency" | "weekdays"
+>;
+
 export interface Debt {
   id: number;
   kind: "onetime" | "installment";

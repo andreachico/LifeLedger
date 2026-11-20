@@ -2,10 +2,12 @@ import type {
   BudgetPlan,
   Debt,
   Expense,
+  Habit,
   Income,
   InvestmentSale,
   NewDebt,
   NewExpense,
+  NewHabit,
   NewIncome,
   NewInvestmentSale,
   NewSaving,
@@ -196,6 +198,58 @@ export async function createInvestmentSale(
 export async function deleteInvestmentSale(id: number): Promise<void> {
   const res = await fetch(`/api/investments/${id}`, { method: "DELETE" });
   if (!res.ok) throw new Error(`delete failed (${res.status})`);
+}
+
+// --- Habits ---
+//
+// Per-user daily habits with check-ins. The list is loaded server-side (see
+// server-api.ts); these mutate a single habit or toggle one day's check-in.
+
+export async function createHabit(input: NewHabit): Promise<Habit> {
+  return handle<Habit>(
+    await fetch("/api/habits", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function updateHabit(id: number, input: NewHabit): Promise<Habit> {
+  return handle<Habit>(
+    await fetch(`/api/habits/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function deleteHabit(id: number): Promise<void> {
+  const res = await fetch(`/api/habits/${id}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`delete failed (${res.status})`);
+}
+
+// A check-in is identified by its habit and a "YYYY-MM-DD" date. Adding is
+// idempotent on the server, so retries are safe.
+export async function addHabitCheckin(
+  id: number,
+  date: string,
+): Promise<void> {
+  const res = await fetch(`/api/habits/${id}/checkins/${date}`, {
+    method: "PUT",
+  });
+  if (!res.ok) throw new Error(`check-in failed (${res.status})`);
+}
+
+export async function removeHabitCheckin(
+  id: number,
+  date: string,
+): Promise<void> {
+  const res = await fetch(`/api/habits/${id}/checkins/${date}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`check-in removal failed (${res.status})`);
 }
 
 export async function getDebts(): Promise<Debt[]> {
