@@ -77,3 +77,58 @@ func (s *PostgresStore) Delete(ctx context.Context, id int) error {
 	}
 	return nil
 }
+
+// ListHoldings returns the caller's saved holding names in insertion order.
+func (s *PostgresStore) ListHoldings(ctx context.Context) ([]string, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT name FROM investment_holdings WHERE user_id = $1 ORDER BY id`,
+		auth.UserID(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("querying investment holdings: %w", err)
+	}
+	defer rows.Close()
+
+	list := make([]string, 0)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scanning investment holding: %w", err)
+		}
+		list = append(list, name)
+	}
+	return list, rows.Err()
+}
+
+// CreateHolding adds a holding name for the caller, ignoring case-insensitive dupes.
+func (s *PostgresStore) CreateHolding(ctx context.Context, name string) error {
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO investment_holdings (user_id, name) VALUES ($1, $2)
+		 ON CONFLICT (user_id, lower(name)) DO NOTHING`,
+		auth.UserID(ctx), name)
+	if err != nil {
+		return fmt.Errorf("inserting investment holding: %w", err)
+	}
+	return nil
+}
+
+// RenameHolding renames one of the caller's holdings (case-insensitive match).
+func (s *PostgresStore) RenameHolding(ctx context.Context, oldName, newName string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE investment_holdings SET name = $1 WHERE user_id = $2 AND lower(name) = lower($3)`,
+		newName, auth.UserID(ctx), oldName)
+	if err != nil {
+		return fmt.Errorf("renaming investment holding: %w", err)
+	}
+	return nil
+}
+
+// DeleteHolding removes one of the caller's holdings (case-insensitive match).
+func (s *PostgresStore) DeleteHolding(ctx context.Context, name string) error {
+	_, err := s.pool.Exec(ctx,
+		`DELETE FROM investment_holdings WHERE user_id = $1 AND lower(name) = lower($2)`,
+		auth.UserID(ctx), name)
+	if err != nil {
+		return fmt.Errorf("deleting investment holding: %w", err)
+	}
+	return nil
+}

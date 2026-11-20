@@ -20,6 +20,7 @@ import (
 	"github.com/andreachico/go-expense-tracker/internal/income"
 	"github.com/andreachico/go-expense-tracker/internal/investment"
 	"github.com/andreachico/go-expense-tracker/internal/savings"
+	"github.com/andreachico/go-expense-tracker/internal/userdoc"
 	"github.com/joho/godotenv"
 )
 
@@ -106,6 +107,15 @@ func main() {
 	habitStore := newHabitStore()
 	habit.NewHandler(habitStore).Register(protected)
 	if closer, ok := habitStore.(interface{ Close() }); ok {
+		defer closer.Close()
+	}
+
+	// Generic per-user JSON documents: backs views that were localStorage-only
+	// (travel plan, year overview, monthly budget targets) so their data follows
+	// the account across devices.
+	userDocStore := newUserDocStore()
+	userdoc.NewHandler(userDocStore).Register(protected)
+	if closer, ok := userDocStore.(interface{ Close() }); ok {
 		defer closer.Close()
 	}
 
@@ -279,6 +289,22 @@ func newHabitStore() habit.Store {
 	}
 
 	store, err := habit.NewPostgresStore(context.Background(), dsn)
+	if err != nil {
+		log.Fatalf("could not connect to database: %v", err)
+	}
+	return store
+}
+
+// newUserDocStore mirrors newStore for generic per-user documents: PostgreSQL
+// when DATABASE_URL is set, in-memory otherwise.
+func newUserDocStore() userdoc.Store {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		log.Println("DATABASE_URL not set — using in-memory user document store")
+		return userdoc.NewMemoryStore()
+	}
+
+	store, err := userdoc.NewPostgresStore(context.Background(), dsn)
 	if err != nil {
 		log.Fatalf("could not connect to database: %v", err)
 	}

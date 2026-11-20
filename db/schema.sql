@@ -54,6 +54,17 @@ CREATE TABLE IF NOT EXISTS savings (
 );
 CREATE INDEX IF NOT EXISTS savings_user_month_idx ON savings (user_id, month);
 
+-- Savings funds: the user-defined catalog of fund names shown in the savings
+-- dropdown. A fund persists here even before it has any deposits or withdrawals,
+-- so added choices survive a reload. Names are unique per user (case-insensitive).
+CREATE TABLE IF NOT EXISTS savings_funds (
+    id      SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    name    TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS savings_funds_user_name_lower_idx
+    ON savings_funds (user_id, lower(name));
+
 -- Investment sales: each row records cashing out part of a holding in a given
 -- "YYYY-MM" month. Buys are planned in the budget sheet (budget_amounts); a sale
 -- is subtracted from an asset's running total on the investments page.
@@ -65,6 +76,17 @@ CREATE TABLE IF NOT EXISTS investment_sales (
     month   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS investment_sales_user_month_idx ON investment_sales (user_id, month);
+
+-- Investment holdings: the user-defined catalog of holding names shown in the
+-- investments dropdown. A holding persists here even before it has any buys or
+-- sells, so added choices survive a reload. Names are unique per user (case-insensitive).
+CREATE TABLE IF NOT EXISTS investment_holdings (
+    id      SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    name    TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS investment_holdings_user_name_lower_idx
+    ON investment_holdings (user_id, lower(name));
 
 -- Debts come in two kinds: one-time payments (kind='onetime', paid in full in a
 -- single month) and installment plans / Ratenzahlungen (kind='installment', a
@@ -100,6 +122,18 @@ CREATE TABLE IF NOT EXISTS budget_amounts (
     PRIMARY KEY (user_id, month, entry_key)
 );
 
+-- Personalized Type/Category dropdown options for the budget tables, keyed by
+-- the section id (e.g. "variable"). These persist per user independently of
+-- month and start empty for new accounts, so one account's choices never leak
+-- into another.
+CREATE TABLE IF NOT EXISTS budget_type_options (
+    user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    section TEXT NOT NULL,
+    name    TEXT NOT NULL,
+    icon    TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (user_id, section, name)
+);
+
 -- Habits: one row per tracked habit, with a separate habit_checkins table
 -- recording each "YYYY-MM-DD" date the habit was completed. Colour is the accent
 -- shown in the UI. Frequency is "daily", "weekly" (once a week) or "weekdays";
@@ -125,3 +159,15 @@ CREATE TABLE IF NOT EXISTS habit_checkins (
     date     DATE NOT NULL,
     PRIMARY KEY (habit_id, date)
 );
+
+-- Generic per-user JSON documents. Backs views that used to persist only to the
+-- browser's localStorage (travel plan, year overview, monthly budget targets),
+-- so their data now follows the account across devices. Each row is one opaque
+-- JSON blob the frontend owns, keyed by a short document key scoped to a user.
+CREATE TABLE IF NOT EXISTS user_documents (
+    user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    doc_key TEXT NOT NULL,
+    data    JSONB NOT NULL DEFAULT '{}'::jsonb,
+    PRIMARY KEY (user_id, doc_key)
+);
+

@@ -77,3 +77,58 @@ func (s *PostgresStore) Delete(ctx context.Context, id int) error {
 	}
 	return nil
 }
+
+// ListFunds returns the caller's saved fund names in insertion order.
+func (s *PostgresStore) ListFunds(ctx context.Context) ([]string, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT name FROM savings_funds WHERE user_id = $1 ORDER BY id`,
+		auth.UserID(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("querying savings funds: %w", err)
+	}
+	defer rows.Close()
+
+	list := make([]string, 0)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scanning savings fund: %w", err)
+		}
+		list = append(list, name)
+	}
+	return list, rows.Err()
+}
+
+// CreateFund adds a fund name for the caller, ignoring case-insensitive dupes.
+func (s *PostgresStore) CreateFund(ctx context.Context, name string) error {
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO savings_funds (user_id, name) VALUES ($1, $2)
+		 ON CONFLICT (user_id, lower(name)) DO NOTHING`,
+		auth.UserID(ctx), name)
+	if err != nil {
+		return fmt.Errorf("inserting savings fund: %w", err)
+	}
+	return nil
+}
+
+// RenameFund renames one of the caller's funds (case-insensitive match).
+func (s *PostgresStore) RenameFund(ctx context.Context, oldName, newName string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE savings_funds SET name = $1 WHERE user_id = $2 AND lower(name) = lower($3)`,
+		newName, auth.UserID(ctx), oldName)
+	if err != nil {
+		return fmt.Errorf("renaming savings fund: %w", err)
+	}
+	return nil
+}
+
+// DeleteFund removes one of the caller's funds (case-insensitive match).
+func (s *PostgresStore) DeleteFund(ctx context.Context, name string) error {
+	_, err := s.pool.Exec(ctx,
+		`DELETE FROM savings_funds WHERE user_id = $1 AND lower(name) = lower($2)`,
+		auth.UserID(ctx), name)
+	if err != nil {
+		return fmt.Errorf("deleting savings fund: %w", err)
+	}
+	return nil
+}
