@@ -3,11 +3,15 @@
 // Travel fund plan: a self-contained view for planning upcoming trips. Each
 // destination holds a list of plan items (accommodation, flights, food, …) with
 // a budget and status. The page derives how much is already paid and how much to
-// set aside each month to reach every trip on time. Everything persists to
-// localStorage, so no backend round-trip is needed.
+// set aside each month to reach every trip on time. Everything persists per
+// account in the backend, so the plan follows the user across devices.
 import { useEffect, useRef, useState } from "react";
-import { getBudgetBreakdown, getBudgetPlan } from "@/lib/api";
-import { adoptLegacyKey, useUserId, userScopedKey } from "@/lib/use-user";
+import {
+  getBudgetBreakdown,
+  getBudgetPlan,
+  getUserDoc,
+  saveUserDoc,
+} from "@/lib/api";
 import DatePicker from "../date-picker";
 
 const currency = new Intl.NumberFormat("en-IE", {
@@ -40,7 +44,7 @@ type Destination = {
   items: TripItem[];
 };
 
-const STORAGE_KEY = "travel-plan-destinations";
+const STORAGE_KEY = "travel-destinations";
 
 // Badge label + colour per status. These semantic colours stay as-is; the brown
 // theme applies to the surrounding chrome.
@@ -96,7 +100,6 @@ function statsFor(dest: Destination, refMonth: string, eingezahlt: number) {
 }
 
 export default function TravelPage() {
-  const { userId, ready } = useUserId();
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [refYear, setRefYear] = useState(() => String(new Date().getFullYear()));
@@ -111,29 +114,32 @@ export default function TravelPage() {
     { destId: string; item?: TripItem } | null
   >(null);
 
-  // Load once the account id is known. Same initial empty value on server &
-  // client avoids a hydration mismatch; the storage key is namespaced per user.
-  // Any data saved under the old global key is migrated into this account once
-  // (and the global copy deleted), so existing data is kept while a freshly
-  // created account starts empty instead of inheriting it.
+  // Load persisted destinations once on mount. Same initial empty value on
+  // server & client avoids a hydration mismatch; the data is stored per account
+  // in the backend, so each user sees only their own trips.
   useEffect(() => {
-    if (!ready) return;
-    try {
-      const raw = adoptLegacyKey(STORAGE_KEY, userId);
-      setDestinations(raw ? (JSON.parse(raw) as Destination[]) : []);
-    } catch {
-      setDestinations([]);
-    }
-    setLoaded(true);
-  }, [ready, userId]);
+    let active = true;
+    getUserDoc<Destination[]>(STORAGE_KEY)
+      .then((stored) => {
+        if (active && stored) setDestinations(stored);
+      })
+      .catch(() => {
+        // Ignore load failures; the user can still start from an empty plan.
+      })
+      .finally(() => {
+        if (active) setLoaded(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!loaded) return;
-    localStorage.setItem(
-      userScopedKey(STORAGE_KEY, userId),
-      JSON.stringify(destinations),
-    );
-  }, [destinations, loaded, userId]);
+    void saveUserDoc(STORAGE_KEY, destinations).catch(() => {
+      // Ignore save failures; the next change retries.
+    });
+  }, [destinations, loaded]);
 
   // Load how much has already been paid into each trip's sinking fund from the
   // budget sheet. Amounts are summed across every saved month; labels come from

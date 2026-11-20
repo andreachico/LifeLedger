@@ -107,3 +107,53 @@ func (s *PostgresStore) Breakdown(ctx context.Context) (map[string]map[string]fl
 	}
 	return out, rows.Err()
 }
+
+// GetTypeOptions loads the caller's saved Type/Category options, grouped by
+// section id.
+func (s *PostgresStore) GetTypeOptions(ctx context.Context) (TypeOptions, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT section, name, icon FROM budget_type_options WHERE user_id = $1 ORDER BY section, name`,
+		auth.UserID(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("querying budget type options: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(TypeOptions)
+	for rows.Next() {
+		var section, name, icon string
+		if err := rows.Scan(&section, &name, &icon); err != nil {
+			return nil, fmt.Errorf("scanning budget type option: %w", err)
+		}
+		out[section] = append(out[section], TypeOption{Name: name, Icon: icon})
+	}
+	return out, rows.Err()
+}
+
+// SaveTypeOptions replaces the caller's Type/Category options inside a
+// transaction: clear this user's rows, then insert the new ones. Blank section
+// ids and option names are skipped.
+func (s *PostgresStore) SaveTypeOptions(ctx context.Context, opts TypeOptions) error {
+	userID := auth.UserID(ctx)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) // no-op once the transaction is committed.
+
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM budget_type_options WHERE user_id = $1`, userID); err != nil {
+		return fmt.Errorf("clearing budget type options: %w", err)
+	}
+	for section, list := range opts {
+		for _, opt := range list {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO budget_type_options (user_id, section, name, icon) VALUES ($1, $2, $3, $4)
+				 ON CONFLICT (user_id, section, name) DO UPDATE SET icon = EXCLUDED.icon`,
+				userID, section, opt.Name, opt.Icon); err != nil {
+				return fmt.Errorf("inserting budget type option: %w", err)
+			}
+		}
+	}
+	return tx.Commit(ctx)
+}

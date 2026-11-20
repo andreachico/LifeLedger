@@ -4,10 +4,16 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { BudgetPlan, Expense } from "@/lib/types";
-import { getIncome, saveBudgetPlan } from "@/lib/api";
-import { useUserId, userScopedKey } from "@/lib/use-user";
+import {
+  getBudgetTypeOptions,
+  getIncome,
+  saveBudgetPlan,
+  saveBudgetTypeOptions,
+  type BudgetTypeOption,
+} from "@/lib/api";
 import SpendingCharts, { type OverviewBucket } from "../spending-charts";
 import BudgetDropdown from "../budget-dropdown";
+import ConfirmDialog from "../confirm-dialog";
 
 const currency = new Intl.NumberFormat("en-IE", {
   style: "currency",
@@ -33,6 +39,241 @@ function addMonths(month: string, delta: number): string {
   const d = new Date(year, m - 1 + delta, 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
+
+// Preset icons a user can attach to a variable-expense category. Each entry's
+// `id` is stored on the type option; `paths` is the inner SVG of a 24×24,
+// stroke-based (feather-style) icon. Keep this list in sync with CategoryIcon.
+const CATEGORY_ICONS: { id: string; label: string; paths: React.ReactNode }[] = [
+  {
+    id: "cart",
+    label: "Groceries",
+    paths: (
+      <>
+        <circle cx="9" cy="21" r="1" />
+        <circle cx="20" cy="21" r="1" />
+        <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+      </>
+    ),
+  },
+  {
+    id: "food",
+    label: "Dining",
+    paths: (
+      <>
+        <path d="M8 2v7" />
+        <path d="M5 2v7a3 3 0 0 0 6 0V2" />
+        <path d="M8 9v13" />
+        <path d="M17 2c-1.5 0-3 1.5-3 5v4h3" />
+        <path d="M17 2v20" />
+      </>
+    ),
+  },
+  {
+    id: "car",
+    label: "Transport",
+    paths: (
+      <>
+        <path d="M5 17h14" />
+        <path d="M6 17l1.5-5h9L18 17" />
+        <circle cx="7.5" cy="17.5" r="1.5" />
+        <circle cx="16.5" cy="17.5" r="1.5" />
+      </>
+    ),
+  },
+  {
+    id: "home",
+    label: "Home",
+    paths: (
+      <>
+        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+        <polyline points="9 22 9 12 15 12 15 22" />
+      </>
+    ),
+  },
+  {
+    id: "health",
+    label: "Health",
+    paths: (
+      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+    ),
+  },
+  {
+    id: "gift",
+    label: "Gifts",
+    paths: (
+      <>
+        <polyline points="20 12 20 22 4 22 4 12" />
+        <rect x="2" y="7" width="20" height="5" />
+        <line x1="12" y1="22" x2="12" y2="7" />
+        <path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z" />
+        <path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z" />
+      </>
+    ),
+  },
+  {
+    id: "fun",
+    label: "Entertainment",
+    paths: (
+      <>
+        <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18" />
+        <line x1="7" y1="2" x2="7" y2="22" />
+        <line x1="17" y1="2" x2="17" y2="22" />
+        <line x1="2" y1="12" x2="22" y2="12" />
+        <line x1="2" y1="7" x2="7" y2="7" />
+        <line x1="2" y1="17" x2="7" y2="17" />
+        <line x1="17" y1="17" x2="22" y2="17" />
+        <line x1="17" y1="7" x2="22" y2="7" />
+      </>
+    ),
+  },
+  {
+    id: "shopping",
+    label: "Shopping",
+    paths: (
+      <>
+        <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
+        <line x1="3" y1="6" x2="21" y2="6" />
+        <path d="M16 10a4 4 0 0 1-8 0" />
+      </>
+    ),
+  },
+  {
+    id: "coffee",
+    label: "Coffee",
+    paths: (
+      <>
+        <path d="M18 8h1a4 4 0 0 1 0 8h-1" />
+        <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4z" />
+        <line x1="6" y1="1" x2="6" y2="4" />
+        <line x1="10" y1="1" x2="10" y2="4" />
+        <line x1="14" y1="1" x2="14" y2="4" />
+      </>
+    ),
+  },
+  {
+    id: "travel",
+    label: "Travel",
+    paths: (
+      <path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z" />
+    ),
+  },
+  {
+    id: "phone",
+    label: "Phone",
+    paths: (
+      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" />
+    ),
+  },
+  {
+    id: "wifi",
+    label: "Internet",
+    paths: (
+      <>
+        <path d="M5 12.55a11 11 0 0 1 14.08 0" />
+        <path d="M1.42 9a16 16 0 0 1 21.16 0" />
+        <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
+        <line x1="12" y1="20" x2="12.01" y2="20" />
+      </>
+    ),
+  },
+  {
+    id: "book",
+    label: "Education",
+    paths: (
+      <>
+        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+      </>
+    ),
+  },
+  {
+    id: "music",
+    label: "Music",
+    paths: (
+      <>
+        <path d="M9 18V5l12-2v13" />
+        <circle cx="6" cy="18" r="3" />
+        <circle cx="18" cy="16" r="3" />
+      </>
+    ),
+  },
+  {
+    id: "fitness",
+    label: "Fitness",
+    paths: (
+      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+    ),
+  },
+  {
+    id: "utilities",
+    label: "Utilities",
+    paths: (
+      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+    ),
+  },
+  {
+    id: "beauty",
+    label: "Beauty",
+    paths: (
+      <>
+        <circle cx="6" cy="6" r="3" />
+        <circle cx="6" cy="18" r="3" />
+        <line x1="20" y1="4" x2="8.12" y2="15.88" />
+        <line x1="14.47" y1="14.48" x2="20" y2="20" />
+        <line x1="8.12" y1="8.12" x2="12" y2="12" />
+      </>
+    ),
+  },
+  {
+    id: "repairs",
+    label: "Repairs",
+    paths: (
+      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+    ),
+  },
+  {
+    id: "camera",
+    label: "Photography",
+    paths: (
+      <>
+        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+        <circle cx="12" cy="13" r="4" />
+      </>
+    ),
+  },
+  {
+    id: "subscriptions",
+    label: "Subscriptions",
+    paths: (
+      <>
+        <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
+        <line x1="1" y1="10" x2="23" y2="10" />
+      </>
+    ),
+  },
+];
+
+// Renders a preset category icon by id, or nothing when the id is unknown/empty.
+function CategoryIcon({ id, size = 16 }: { id?: string; size?: number }) {
+  const icon = CATEGORY_ICONS.find((i) => i.id === id);
+  if (!icon) return null;
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {icon.paths}
+    </svg>
+  );
+}
+
 
 // Shared props for the small summary-card icons.
 const cardIcon = {
@@ -86,10 +327,6 @@ const DEFAULT_SECTION_IDS = new Set(["fix", "others"]);
 // Variable Kosten has its own Soll / Ist layout, kept separate from the
 // Type / Category / Budget sections above.
 const VARIABLE_KOSTEN: Row[] = [];
-
-// Each table keeps its own Type choices. They start empty for every user and are
-// added per section, persisted to localStorage as { [sectionId]: string[] }.
-const TYPE_OPTIONS_KEY = "budget-type-options-v3";
 
 // User-created tables (sections). Persisted to the backend plan under a
 // "table:<id>" key so they sync across devices (per month, like custom rows).
@@ -398,52 +635,132 @@ export default function BudgetSheet({
   >(() => extractOverrides(initialPlan));
 
   // Personalizable Type choices, kept separately per table (section id). Each
-  // section starts empty and is merged with the user's saved additions
-  // (localStorage). Same initial value on server & client to avoid a hydration
-  // mismatch. The storage key is namespaced per user so Type options added by
-  // one account don't leak into another on the same browser; options saved under
-  // the old global key are migrated into this account once, then the global copy
-  // is deleted.
-  const { userId, ready: userReady } = useUserId();
-  const [typeOptions, setTypeOptions] = useState<Record<string, string[]>>({});
+  // section starts empty and is loaded from the backend, so choices persist per
+  // account (not per browser) and new accounts start with none.
+  const [typeOptions, setTypeOptions] = useState<
+    Record<string, BudgetTypeOption[]>
+  >({});
   const [typeOptionsLoaded, setTypeOptionsLoaded] = useState(false);
   useEffect(() => {
-    if (!userReady) return;
-    try {
-      // Read ONLY this account's namespaced options. The old global (un-scoped)
-      // key is purged rather than adopted, so a freshly created account can never
-      // inherit another account's Type choices on a shared browser. Types already
-      // used on saved rows still populate the dropdowns via typesFor().
-      localStorage.removeItem(TYPE_OPTIONS_KEY);
-      const raw = localStorage.getItem(userScopedKey(TYPE_OPTIONS_KEY, userId));
-      if (raw) {
-        const stored = JSON.parse(raw);
-        if (stored && typeof stored === "object" && !Array.isArray(stored)) {
-          setTypeOptions(stored as Record<string, string[]>);
-        }
-      }
-    } catch {
-      // Ignore malformed storage.
-    }
-    setTypeOptionsLoaded(true);
-  }, [userReady, userId]);
+    let active = true;
+    getBudgetTypeOptions()
+      .then((opts) => {
+        if (active) setTypeOptions(opts);
+      })
+      .catch(() => {
+        // Ignore load failures; the dropdowns still work from used types.
+      })
+      .finally(() => {
+        if (active) setTypeOptionsLoaded(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
   useEffect(() => {
     if (!typeOptionsLoaded) return;
-    localStorage.setItem(
-      userScopedKey(TYPE_OPTIONS_KEY, userId),
-      JSON.stringify(typeOptions),
-    );
-  }, [typeOptions, typeOptionsLoaded, userId]);
+    void saveBudgetTypeOptions(typeOptions).catch(() => {
+      // Ignore save failures; the next change retries.
+    });
+  }, [typeOptions, typeOptionsLoaded]);
 
   function addTypeOption(sectionId: string, value: string) {
     const t = value.trim();
     if (!t) return;
     setTypeOptions((prev) => {
       const current = prev[sectionId] ?? [];
-      if (current.includes(t)) return prev;
+      if (current.some((o) => o.name.toLowerCase() === t.toLowerCase())) {
+        return prev;
+      }
       return {
         ...prev,
-        [sectionId]: [...current, t].sort((a, b) => a.localeCompare(b)),
+        [sectionId]: [...current, { name: t, icon: "" }].sort((a, b) =>
+          a.name.localeCompare(b.name),
+        ),
+      };
+    });
+  }
+
+  // Rename a saved type option in a section, keeping its icon and updating any
+  // custom rows that still reference the old name so the change is consistent.
+  function renameTypeOption(
+    sectionId: string,
+    oldName: string,
+    newName: string,
+  ) {
+    const next = newName.trim();
+    if (!next || next === oldName) return;
+    setTypeOptions((prev) => {
+      const current = prev[sectionId] ?? [];
+      if (
+        current.some(
+          (o) =>
+            o.name.toLowerCase() === next.toLowerCase() &&
+            o.name.toLowerCase() !== oldName.toLowerCase(),
+        )
+      ) {
+        return prev; // target name already exists
+      }
+      return {
+        ...prev,
+        [sectionId]: current
+          .map((o) => (o.name === oldName ? { ...o, name: next } : o))
+          .sort((a, b) => a.name.localeCompare(b.name)),
+      };
+    });
+    setCustomRows((prev) => {
+      const rows = prev[sectionId];
+      if (!rows?.some((r) => r.type === oldName)) return prev;
+      setEdited(true);
+      return {
+        ...prev,
+        [sectionId]: rows.map((r) =>
+          r.type === oldName ? { ...r, type: next } : r,
+        ),
+      };
+    });
+  }
+
+  // Delete a saved type option and clear it from any custom rows that used it,
+  // so it does not reappear via the "types in use" fallback.
+  function deleteTypeOption(sectionId: string, name: string) {
+    setTypeOptions((prev) => {
+      const current = prev[sectionId] ?? [];
+      return { ...prev, [sectionId]: current.filter((o) => o.name !== name) };
+    });
+    setCustomRows((prev) => {
+      const rows = prev[sectionId];
+      if (!rows?.some((r) => r.type === name)) return prev;
+      setEdited(true);
+      return {
+        ...prev,
+        [sectionId]: rows.map((r) =>
+          r.type === name ? { ...r, type: "" } : r,
+        ),
+      };
+    });
+  }
+
+  // Set (or clear) the preset icon on a saved type option. If the option is not
+  // saved yet (e.g. a type only used on rows), add it so the icon persists.
+  function setTypeIcon(sectionId: string, name: string, icon: string) {
+    const n = name.trim();
+    if (!n) return;
+    setTypeOptions((prev) => {
+      const current = prev[sectionId] ?? [];
+      if (current.some((o) => o.name === n)) {
+        return {
+          ...prev,
+          [sectionId]: current.map((o) =>
+            o.name === n ? { ...o, icon } : o,
+          ),
+        };
+      }
+      return {
+        ...prev,
+        [sectionId]: [...current, { name: n, icon }].sort((a, b) =>
+          a.name.localeCompare(b.name),
+        ),
       };
     });
   }
@@ -452,7 +769,7 @@ export default function BudgetSheet({
   // table, plus any type already in use on its rows (built-in or custom). This
   // way a type added on one row is selectable in all rows of that same table.
   function typesFor(sectionId: string): string[] {
-    const added = typeOptions[sectionId] ?? [];
+    const added = (typeOptions[sectionId] ?? []).map((o) => o.name);
     const used: string[] = [];
     const builtin =
       sectionId === "variable"
@@ -469,6 +786,24 @@ export default function BudgetSheet({
       a.localeCompare(b),
     );
   }
+
+  // The icon chosen for a type name within a section (empty when none).
+  function iconFor(sectionId: string, name: string): string {
+    return (
+      (typeOptions[sectionId] ?? []).find((o) => o.name === name)?.icon ?? ""
+    );
+  }
+
+  // Names the user explicitly added for a section (renamable / deletable).
+  function editableTypesFor(sectionId: string): Set<string> {
+    return new Set((typeOptions[sectionId] ?? []).map((o) => o.name));
+  }
+
+  // Category option pending deletion, confirmed via a modal (null = none).
+  const [pendingDeleteType, setPendingDeleteType] = useState<{
+    sectionId: string;
+    name: string;
+  } | null>(null);
 
   // Section id whose "Add row" modal is currently open (null = closed).
   const [modalSection, setModalSection] = useState<string | null>(null);
@@ -1063,7 +1398,14 @@ export default function BudgetSheet({
           custom={customRows.variable ?? []}
           hidden={hidden.variable}
           total={variableTotal}
-          typeOptions={typeOptions.variable ?? []}
+          iconFor={(name) => iconFor("variable", name)}
+          editableTypes={editableTypesFor("variable")}
+          onRenameType={(oldName, newName) =>
+            renameTypeOption("variable", oldName, newName)
+          }
+          onDeleteType={(name) =>
+            setPendingDeleteType({ sectionId: "variable", name })
+          }
           onAddRow={() => setModalSection("variable")}
           onDeleteRow={(rowId) => deleteRow("variable", rowId)}
           onEditRow={(rowId, patch) => editRow("variable", rowId, patch)}
@@ -1160,6 +1502,18 @@ export default function BudgetSheet({
               showType={cfg.showType}
               typeOptions={typesFor(modalSection)}
               onAddType={(t) => addTypeOption(modalSection, t)}
+              editableTypes={editableTypesFor(modalSection)}
+              onRenameType={(oldName, newName) =>
+                renameTypeOption(modalSection, oldName, newName)
+              }
+              onDeleteType={(name) =>
+                setPendingDeleteType({ sectionId: modalSection, name })
+              }
+              showIcons={modalSection === "variable"}
+              iconForName={(name) => iconFor(modalSection, name)}
+              onSetTypeIcon={(name, icon) =>
+                setTypeIcon(modalSection, name, icon)
+              }
               onClose={() => setModalSection(null)}
               onSubmit={(data) => addRow(modalSection, data)}
             />
@@ -1179,6 +1533,18 @@ export default function BudgetSheet({
               showType={cfg.showType}
               typeOptions={typesFor(editing.sectionId)}
               onAddType={(t) => addTypeOption(editing.sectionId, t)}
+              editableTypes={editableTypesFor(editing.sectionId)}
+              onRenameType={(oldName, newName) =>
+                renameTypeOption(editing.sectionId, oldName, newName)
+              }
+              onDeleteType={(name) =>
+                setPendingDeleteType({ sectionId: editing.sectionId, name })
+              }
+              showIcons={editing.sectionId === "variable"}
+              iconForName={(name) => iconFor(editing.sectionId, name)}
+              onSetTypeIcon={(name, icon) =>
+                setTypeIcon(editing.sectionId, name, icon)
+              }
               initial={editing.initial}
               onClose={() => setEditing(null)}
               onSubmit={saveEdit}
@@ -1211,6 +1577,24 @@ export default function BudgetSheet({
           }
         />
       )}
+
+      <ConfirmDialog
+        open={pendingDeleteType !== null}
+        title="Delete category?"
+        message={
+          pendingDeleteType
+            ? `"${pendingDeleteType.name}" will be removed from the list and cleared from any rows using it.`
+            : ""
+        }
+        confirmLabel="Delete"
+        onConfirm={() => {
+          if (pendingDeleteType) {
+            deleteTypeOption(pendingDeleteType.sectionId, pendingDeleteType.name);
+          }
+          setPendingDeleteType(null);
+        }}
+        onCancel={() => setPendingDeleteType(null)}
+      />
     </main>
   );
 }
@@ -1541,7 +1925,10 @@ function VariableSection({
   custom,
   hidden,
   total,
-  typeOptions,
+  iconFor,
+  editableTypes,
+  onRenameType,
+  onDeleteType,
   onAddRow,
   onDeleteRow,
   onEditRow,
@@ -1553,7 +1940,10 @@ function VariableSection({
   custom: Row[];
   hidden?: Set<string>;
   total: number;
-  typeOptions: string[];
+  iconFor: (name: string) => string;
+  editableTypes: Set<string>;
+  onRenameType: (oldName: string, newName: string) => void;
+  onDeleteType: (name: string) => void;
   onAddRow: () => void;
   onDeleteRow: (rowId: string) => void;
   onEditRow: (rowId: string, patch: Partial<Row>) => void;
@@ -1562,6 +1952,108 @@ function VariableSection({
 }) {
   const builtinRows = rows.filter((r) => !hidden?.has(r.id));
   const itemCount = builtinRows.length + custom.length;
+
+  // Which row's Type label is being renamed inline (null = none) and its draft.
+  const [editingTypeRow, setEditingTypeRow] = useState<string | null>(null);
+  const [draftType, setDraftType] = useState("");
+
+  function commitRename(original: string) {
+    const next = draftType.trim();
+    if (next && next !== original) onRenameType(original, next);
+    setEditingTypeRow(null);
+  }
+
+  // Type cell: the chosen preset icon (if any) plus the type label. Hovering a
+  // user-added category reveals inline rename (pencil) and delete (trash)
+  // actions, mirroring the dropdown in the add/edit modal.
+  const typeCell = (row: Row) => {
+    const type = row.type;
+    if (editingTypeRow === row.id) {
+      return (
+        <input
+          type="text"
+          value={draftType}
+          autoFocus
+          onChange={(e) => setDraftType(e.target.value)}
+          onBlur={() => commitRename(type)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commitRename(type);
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              setEditingTypeRow(null);
+            }
+          }}
+          aria-label="Rename category"
+          className="w-full rounded-md border border-amber-600 bg-amber-50 px-2 py-1 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-amber-600/20"
+        />
+      );
+    }
+    const canModify = Boolean(type) && editableTypes.has(type);
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        {iconFor(type) && (
+          <span className="text-amber-700">
+            <CategoryIcon id={iconFor(type)} />
+          </span>
+        )}
+        {type}
+        {canModify && (
+          <span className="ml-1 inline-flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+            <button
+              type="button"
+              aria-label={`Rename ${type}`}
+              onClick={() => {
+                setDraftType(type);
+                setEditingTypeRow(row.id);
+              }}
+              className="flex h-6 w-6 items-center justify-center rounded text-amber-900/60 transition-colors hover:bg-amber-900/10 hover:text-amber-900"
+            >
+              <svg
+                width={13}
+                height={13}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              aria-label={`Delete ${type}`}
+              onClick={() => onDeleteType(type)}
+              className="flex h-6 w-6 items-center justify-center rounded text-amber-900/60 transition-colors hover:bg-red-50 hover:text-red-600"
+            >
+              <svg
+                width={13}
+                height={13}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                <path d="M10 11v6" />
+                <path d="M14 11v6" />
+                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              </svg>
+            </button>
+          </span>
+        )}
+      </span>
+    );
+  };
 
   return (
     <section className="mb-8 overflow-hidden rounded-xl border border-amber-900/20 bg-white shadow-sm">
@@ -1597,7 +2089,7 @@ function VariableSection({
         <tbody className="divide-y divide-amber-900/10">
           {builtinRows.map((r) => (
             <tr key={r.id} className="group hover:bg-amber-900/5">
-              <td className="px-5 py-2 text-amber-900/70">{r.type}</td>
+              <td className="px-5 py-2 text-amber-900/70">{typeCell(r)}</td>
               <td className="px-3 py-2 font-medium">{r.category}</td>
               <td className="px-3 py-2 text-center font-semibold tabular-nums text-zinc-900">
                 {displayAmount(amounts[r.id])}
@@ -1614,7 +2106,7 @@ function VariableSection({
           ))}
           {custom.map((r) => (
             <tr key={r.id} className="group hover:bg-amber-900/5">
-              <td className="px-5 py-2 text-amber-900/70">{r.type}</td>
+              <td className="px-5 py-2 text-amber-900/70">{typeCell(r)}</td>
               <td className="px-3 py-2">
                 <input
                   type="text"
@@ -1670,6 +2162,12 @@ function RowModal({
   showType,
   typeOptions,
   onAddType,
+  editableTypes,
+  onRenameType,
+  onDeleteType,
+  showIcons,
+  iconForName,
+  onSetTypeIcon,
   initial,
   onClose,
   onSubmit,
@@ -1682,6 +2180,12 @@ function RowModal({
   showType: boolean;
   typeOptions: string[];
   onAddType: (type: string) => void;
+  editableTypes?: Set<string>;
+  onRenameType?: (oldName: string, newName: string) => void;
+  onDeleteType?: (name: string) => void;
+  showIcons?: boolean;
+  iconForName?: (name: string) => string;
+  onSetTypeIcon?: (name: string, icon: string) => void;
   initial?: { type: string; category: string; amount: string; due: string };
   onClose: () => void;
   onSubmit: (data: {
@@ -1778,11 +2282,48 @@ function RowModal({
                   }
                   onChange={setType}
                   onAddNew={onAddType}
+                  onRename={onRenameType}
+                  onDelete={onDeleteType}
+                  isEditable={
+                    editableTypes
+                      ? (opt) => editableTypes.has(opt)
+                      : undefined
+                  }
                   placeholder="Select a type"
                   addLabel="Add new type…"
                   ariaLabel="Type"
                 />
               </label>
+            )}
+
+            {showType && showIcons && type.trim() !== "" && (
+              <div className="flex flex-col gap-1.5 sm:col-span-2">
+                <span className="text-sm font-medium text-zinc-900">Icon</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {CATEGORY_ICONS.map((icon) => {
+                    const selected = iconForName?.(type) === icon.id;
+                    return (
+                      <button
+                        key={icon.id}
+                        type="button"
+                        title={icon.label}
+                        aria-label={icon.label}
+                        aria-pressed={selected}
+                        onClick={() =>
+                          onSetTypeIcon?.(type, selected ? "" : icon.id)
+                        }
+                        className={`flex h-9 w-9 items-center justify-center rounded-lg border transition-colors ${
+                          selected
+                            ? "border-amber-600 bg-amber-100 text-amber-800"
+                            : "border-amber-900/15 text-amber-900/60 hover:border-amber-600/40 hover:bg-amber-900/5"
+                        }`}
+                      >
+                        <CategoryIcon id={icon.id} size={18} />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             )}
 
             <label className="flex flex-col gap-1.5">

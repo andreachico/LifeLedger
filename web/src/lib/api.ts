@@ -82,6 +82,59 @@ export async function getBudgetPlan(month: string): Promise<BudgetPlan> {
   );
 }
 
+// --- Budget type/category options ---
+//
+// The personalized Type/Category dropdown choices for the budget tables, keyed
+// by section id. They persist per account (not per month) and start empty for
+// new accounts. Each option carries an optional preset icon id.
+
+export type BudgetTypeOption = { name: string; icon?: string };
+
+export async function getBudgetTypeOptions(): Promise<
+  Record<string, BudgetTypeOption[]>
+> {
+  return handle<Record<string, BudgetTypeOption[]>>(
+    await fetch(`/api/budget/type-options`, { cache: "no-store" }),
+  );
+}
+
+export async function saveBudgetTypeOptions(
+  options: Record<string, BudgetTypeOption[]>,
+): Promise<void> {
+  const res = await fetch(`/api/budget/type-options`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(options),
+    keepalive: true,
+  });
+  if (!res.ok) throw new Error(`save failed (${res.status})`);
+}
+
+// --- Generic per-user documents ---
+//
+// Arbitrary JSON blobs the frontend owns, stored per account and keyed by a
+// short document key (e.g. "travel-destinations"). This backs views that used to
+// persist only to the browser's localStorage, so their data now follows the
+// account across devices. A document that was never saved reads back as null.
+
+export async function getUserDoc<T>(key: string): Promise<T | null> {
+  return handle<T | null>(
+    await fetch(`/api/userdoc/${encodeURIComponent(key)}`, {
+      cache: "no-store",
+    }),
+  );
+}
+
+export async function saveUserDoc<T>(key: string, data: T): Promise<void> {
+  const res = await fetch(`/api/userdoc/${encodeURIComponent(key)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+    keepalive: true,
+  });
+  if (!res.ok) throw new Error(`save failed (${res.status})`);
+}
+
 // --- Authentication ---
 //
 // The Go API sets an HttpOnly session cookie on register/login; the browser
@@ -172,6 +225,52 @@ export async function deleteSaving(id: number): Promise<void> {
   if (!res.ok) throw new Error(`delete failed (${res.status})`);
 }
 
+// --- Savings funds ---
+//
+// The user-defined catalog of fund names shown in the savings dropdown. These
+// persist per account even before a fund has any activity.
+
+export async function getSavingsFunds(): Promise<string[]> {
+  return handle<string[]>(
+    await fetch(`/api/savings/funds`, { cache: "no-store" }),
+  );
+}
+
+export async function createSavingsFund(name: string): Promise<void> {
+  const res = await fetch("/api/savings/funds", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `request failed (${res.status})`);
+  }
+}
+
+export async function renameSavingsFund(
+  oldName: string,
+  newName: string,
+): Promise<void> {
+  const res = await fetch("/api/savings/funds", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ oldName, newName }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `request failed (${res.status})`);
+  }
+}
+
+export async function deleteSavingsFund(name: string): Promise<void> {
+  const res = await fetch(
+    `/api/savings/funds?name=${encodeURIComponent(name)}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) throw new Error(`delete failed (${res.status})`);
+}
+
 // --- Investment sales ---
 //
 // Buys are planned in the budget sheet; these record cashing out part of a
@@ -197,6 +296,52 @@ export async function createInvestmentSale(
 
 export async function deleteInvestmentSale(id: number): Promise<void> {
   const res = await fetch(`/api/investments/${id}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`delete failed (${res.status})`);
+}
+
+// --- Investment holdings ---
+//
+// The user-defined catalog of holding names shown in the investments dropdown.
+// These persist per account even before a holding has any activity.
+
+export async function getInvestmentHoldings(): Promise<string[]> {
+  return handle<string[]>(
+    await fetch(`/api/investments/holdings`, { cache: "no-store" }),
+  );
+}
+
+export async function createInvestmentHolding(name: string): Promise<void> {
+  const res = await fetch("/api/investments/holdings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `request failed (${res.status})`);
+  }
+}
+
+export async function renameInvestmentHolding(
+  oldName: string,
+  newName: string,
+): Promise<void> {
+  const res = await fetch("/api/investments/holdings", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ oldName, newName }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `request failed (${res.status})`);
+  }
+}
+
+export async function deleteInvestmentHolding(name: string): Promise<void> {
+  const res = await fetch(
+    `/api/investments/holdings?name=${encodeURIComponent(name)}`,
+    { method: "DELETE" },
+  );
   if (!res.ok) throw new Error(`delete failed (${res.status})`);
 }
 

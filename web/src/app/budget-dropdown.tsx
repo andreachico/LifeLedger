@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { CATEGORY_ICONS, CategoryGlyph, iconColor } from "./category-icons";
 
 // A modern, amber-themed dropdown with an optional inline "+ Add new…" action.
 // The popover is portaled to <body> with fixed positioning so it's never clipped
@@ -12,6 +13,11 @@ export default function BudgetDropdown({
   options,
   onChange,
   onAddNew,
+  onRename,
+  onDelete,
+  isEditable,
+  iconFor,
+  onSetIcon,
   placeholder = "Select…",
   addLabel = "+ Add new…",
   ariaLabel,
@@ -21,6 +27,14 @@ export default function BudgetDropdown({
   options: string[];
   onChange: (value: string) => void;
   onAddNew?: (value: string) => void;
+  onRename?: (oldValue: string, newValue: string) => void;
+  onDelete?: (value: string) => void;
+  isEditable?: (value: string) => boolean;
+  // When provided, each option shows its chosen preset icon and the edit row
+  // includes an icon picker. `iconFor` returns the current icon id for an
+  // option; `onSetIcon` sets/clears it.
+  iconFor?: (value: string) => string;
+  onSetIcon?: (value: string, icon: string) => void;
   placeholder?: string;
   addLabel?: string;
   ariaLabel?: string;
@@ -29,6 +43,8 @@ export default function BudgetDropdown({
   const [open, setOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
+  const [editingOpt, setEditingOpt] = useState<string | null>(null);
+  const [editOptDraft, setEditOptDraft] = useState("");
   const [rect, setRect] = useState<DOMRect | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -42,6 +58,7 @@ export default function BudgetDropdown({
   function closeMenu() {
     setOpen(false);
     setAdding(false);
+    setEditingOpt(null);
   }
 
   useEffect(() => {
@@ -78,6 +95,14 @@ export default function BudgetDropdown({
     onChange(v);
     setDraft("");
     closeMenu();
+  }
+
+  function confirmRename(oldValue: string) {
+    const v = editOptDraft.trim();
+    setEditingOpt(null);
+    if (!v || v === oldValue) return;
+    onRename?.(oldValue, v);
+    if (value === oldValue) onChange(v);
   }
 
   const triggerClass =
@@ -134,38 +159,198 @@ export default function BudgetDropdown({
             {options.length === 0 && !onAddNew && (
               <p className="px-3 py-2 text-sm text-amber-900/40">No options</p>
             )}
-            {options.map((opt) => (
-              <button
-                key={opt}
-                type="button"
-                onClick={() => {
-                  onChange(opt);
-                  closeMenu();
-                }}
-                className={`flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-sm transition-colors ${
-                  opt === value
-                    ? "bg-linear-to-br from-amber-800 to-amber-600 font-semibold text-amber-50 shadow-sm shadow-amber-900/20"
-                    : "text-zinc-800 hover:bg-amber-900/5"
-                }`}
-              >
-                <span className="truncate">{opt}</span>
-                {opt === value && (
-                  <svg
-                    width={16}
-                    height={16}
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth={2.5}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
+            {options.map((opt) => {
+              const canModify =
+                Boolean(onRename || onDelete) &&
+                (isEditable ? isEditable(opt) : true);
+              if (editingOpt === opt) {
+                return (
+                  <div key={opt} className="p-1">
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="text"
+                        autoFocus
+                        value={editOptDraft}
+                        onChange={(e) => setEditOptDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            confirmRename(opt);
+                          }
+                          if (e.key === "Escape") setEditingOpt(null);
+                        }}
+                        className="w-full rounded-lg border border-amber-900/15 bg-amber-50/40 px-2.5 py-1.5 text-sm text-zinc-900 focus:border-amber-600 focus:bg-white focus:outline-none focus:ring-1 focus:ring-amber-600/20"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => confirmRename(opt)}
+                        aria-label="Save name"
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-emerald-700 transition-colors hover:bg-emerald-50"
+                      >
+                        <svg
+                          width={16}
+                          height={16}
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth={2.5}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden="true"
+                        >
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingOpt(null)}
+                        aria-label="Cancel"
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-amber-900/50 transition-colors hover:bg-amber-900/5"
+                      >
+                        <svg
+                          width={16}
+                          height={16}
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth={2}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden="true"
+                        >
+                          <line x1="18" y1="6" x2="6" y2="18" />
+                          <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </button>
+                    </div>
+                    {onSetIcon && (
+                      <div className="mt-1.5 flex flex-wrap gap-1 px-0.5 pb-0.5">
+                        {CATEGORY_ICONS.map((icon) => {
+                          const selected = iconFor?.(opt) === icon.id;
+                          return (
+                            <button
+                              key={icon.id}
+                              type="button"
+                              title={icon.label}
+                              aria-label={icon.label}
+                              aria-pressed={selected}
+                              onClick={() =>
+                                onSetIcon(opt, selected ? "" : icon.id)
+                              }
+                              className={`flex h-7 w-7 items-center justify-center rounded-lg border transition-colors ${iconColor(
+                                icon.id,
+                              )} ${
+                                selected
+                                  ? "border-amber-600 ring-2 ring-amber-500/40"
+                                  : "border-transparent hover:border-amber-600/40"
+                              }`}
+                            >
+                              <CategoryGlyph id={icon.id} size={15} />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+              return (
+                <div key={opt} className="flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onChange(opt);
+                      closeMenu();
+                    }}
+                    className={`flex min-w-0 flex-1 items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-sm transition-colors ${
+                      opt === value
+                        ? "bg-linear-to-br from-amber-800 to-amber-600 font-semibold text-amber-50 shadow-sm shadow-amber-900/20"
+                        : "text-zinc-800 hover:bg-amber-900/5"
+                    }`}
                   >
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                )}
-              </button>
-            ))}
+                    <span className="flex min-w-0 items-center gap-2">
+                      {iconFor && iconFor(opt) && (
+                        <span
+                          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${iconColor(
+                            iconFor(opt),
+                          )}`}
+                        >
+                          <CategoryGlyph id={iconFor(opt)} size={14} />
+                        </span>
+                      )}
+                      <span className="truncate">{opt}</span>
+                    </span>
+                    {opt === value && (
+                      <svg
+                        width={16}
+                        height={16}
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={2.5}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    )}
+                  </button>
+                  {canModify && onRename && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingOpt(opt);
+                        setEditOptDraft(opt);
+                      }}
+                      aria-label={`Rename ${opt}`}
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-amber-900/50 transition-colors hover:bg-amber-900/5 hover:text-amber-900"
+                    >
+                      <svg
+                        width={14}
+                        height={14}
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M12 20h9" />
+                        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                      </svg>
+                    </button>
+                  )}
+                  {canModify && onDelete && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        closeMenu();
+                        onDelete(opt);
+                      }}
+                      aria-label={`Delete ${opt}`}
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-amber-900/50 transition-colors hover:bg-red-50 hover:text-red-600"
+                    >
+                      <svg
+                        width={14}
+                        height={14}
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M3 6h18" />
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              );
+            })}
             {onAddNew && (
               <div className="mt-1 border-t border-amber-900/10 pt-1">
                 {adding ? (
