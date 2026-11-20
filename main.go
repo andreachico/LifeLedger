@@ -16,6 +16,7 @@ import (
 	"github.com/andreachico/go-expense-tracker/internal/budget"
 	"github.com/andreachico/go-expense-tracker/internal/debt"
 	"github.com/andreachico/go-expense-tracker/internal/expense"
+	"github.com/andreachico/go-expense-tracker/internal/habit"
 	"github.com/andreachico/go-expense-tracker/internal/income"
 	"github.com/andreachico/go-expense-tracker/internal/investment"
 	"github.com/andreachico/go-expense-tracker/internal/savings"
@@ -98,6 +99,13 @@ func main() {
 	debtStore := newDebtStore()
 	debt.NewHandler(debtStore).Register(protected)
 	if closer, ok := debtStore.(interface{ Close() }); ok {
+		defer closer.Close()
+	}
+
+	// Habits: per-user daily habits with check-ins, persisted like everything else.
+	habitStore := newHabitStore()
+	habit.NewHandler(habitStore).Register(protected)
+	if closer, ok := habitStore.(interface{ Close() }); ok {
 		defer closer.Close()
 	}
 
@@ -255,6 +263,22 @@ func newDebtStore() debt.Store {
 	}
 
 	store, err := debt.NewPostgresStore(context.Background(), dsn)
+	if err != nil {
+		log.Fatalf("could not connect to database: %v", err)
+	}
+	return store
+}
+
+// newHabitStore mirrors newStore for habits: PostgreSQL when DATABASE_URL is
+// set, in-memory otherwise.
+func newHabitStore() habit.Store {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		log.Println("DATABASE_URL not set — using in-memory habit store")
+		return habit.NewMemoryStore()
+	}
+
+	store, err := habit.NewPostgresStore(context.Background(), dsn)
 	if err != nil {
 		log.Fatalf("could not connect to database: %v", err)
 	}
