@@ -7,6 +7,7 @@
 // backend so they follow the user across devices.
 import { useEffect, useMemo, useState } from "react";
 import { getUserDoc, saveUserDoc } from "@/lib/api";
+import { adoptLegacyKey } from "@/lib/use-user";
 import BudgetDropdown from "../budget-dropdown";
 import DatePicker from "../date-picker";
 
@@ -205,18 +206,41 @@ export default function YearOverview() {
   // Load persisted user events once on mount. Starting empty on both server and
   // client keeps the initial render identical. Events are stored per account in
   // the backend, so each user sees only their own.
+  //
+  // Recovery: events used to live only in this browser's localStorage. If the
+  // backend has none yet but a legacy local copy exists for THIS account, adopt
+  // it once and push it to the backend. adoptLegacyKey only reads the current
+  // account's namespaced key ("year-overview:events::u<id>"), so one account can
+  // never inherit another's events.
   useEffect(() => {
     let active = true;
-    getUserDoc<CalEvent[]>(STORAGE_KEY)
-      .then((stored) => {
-        if (active && stored) setEvents(stored);
-      })
-      .catch(() => {
-        // Ignore load failures; the user can still add events from empty.
-      })
-      .finally(() => {
+    (async () => {
+      try {
+        const stored = await getUserDoc<CalEvent[]>(STORAGE_KEY);
+        if (!active) return;
+        if (stored && stored.length) {
+          setEvents(stored);
+          return;
+        }
+        // Resolve the signed-in account so recovery stays scoped to it.
+        const me = await fetch("/api/auth/me")
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null);
+        if (!active) return;
+        const userId: number | null = me?.id ?? null;
+        const raw = adoptLegacyKey("year-overview:events", userId);
+        if (!raw) return;
+        const legacy = JSON.parse(raw) as CalEvent[];
+        if (Array.isArray(legacy) && legacy.length) {
+          setEvents(legacy);
+          void saveUserDoc(STORAGE_KEY, legacy).catch(() => {});
+        }
+      } catch {
+        // Ignore load/parse failures; the user can still add events from empty.
+      } finally {
         if (active) setLoaded(true);
-      });
+      }
+    })();
     return () => {
       active = false;
     };
