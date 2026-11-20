@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import type { BudgetPlan, Expense } from "./types";
+import type { BudgetPlan, Expense, Habit } from "./types";
 
 // Server-side data loading. Unlike the browser client (which uses the "/api"
 // proxy), a Server Component runs on the server and must call the backend with
@@ -44,4 +44,18 @@ export async function getBudgetPlan(month: string): Promise<BudgetPlan> {
     throw new Error(`failed to load budget (${res.status})`);
   }
   return res.json() as Promise<BudgetPlan>;
+}
+
+// getHabits loads the caller's habits (each with its check-in dates) for the
+// habit tracker's initial render.
+export async function getHabits(): Promise<Habit[]> {
+  const res = await fetch(`${BACKEND_URL}/habits`, {
+    cache: "no-store",
+    headers: await authHeaders(),
+  });
+  if (res.status === 401) redirect("/login");
+  if (!res.ok) {
+    throw new Error(`failed to load habits (${res.status})`);
+  }
+  return res.json() as Promise<Habit[]>;
 }
