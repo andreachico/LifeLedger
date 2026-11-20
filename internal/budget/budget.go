@@ -18,3 +18,15 @@ type Entry struct {
 
 // Plan is the entire budget sheet as a flat map of entry keys to entries.
 type Plan map[string]Entry
+
+// TypeOption is one personalized Type/Category dropdown choice. Icon is an
+// optional preset icon id (e.g. "cart", "car") shown next to the name.
+type TypeOption struct {
+	Name string `json:"name"`
+	Icon string `json:"icon,omitempty"`
+}
+
+// TypeOptions is the user's personalized Type/Category dropdown choices for the
+// budget tables, keyed by section id (e.g. "variable") to its list of options.
+// They persist per user, independent of month, and start empty for new accounts.
+type TypeOptions map[string][]TypeOption

@@ -37,6 +37,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /budget", h.get)
 	mux.HandleFunc("GET /budget/breakdown", h.breakdown)
 	mux.HandleFunc("PUT /budget", h.save)
+
+	// Personalized Type/Category dropdown options, independent of month.
+	mux.HandleFunc("GET /budget/type-options", h.getTypeOptions)
+	mux.HandleFunc("PUT /budget/type-options", h.saveTypeOptions)
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +74,30 @@ func (h *Handler) save(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, plan)
+}
+
+// getTypeOptions returns the caller's personalized Type/Category options.
+func (h *Handler) getTypeOptions(w http.ResponseWriter, r *http.Request) {
+	opts, err := h.store.GetTypeOptions(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, opts)
+}
+
+// saveTypeOptions replaces the caller's personalized Type/Category options.
+func (h *Handler) saveTypeOptions(w http.ResponseWriter, r *http.Request) {
+	var opts TypeOptions
+	if err := json.NewDecoder(r.Body).Decode(&opts); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if err := h.store.SaveTypeOptions(r.Context(), opts); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, opts)
 }
 
 // writeJSON encodes a value as JSON with the given status code.
