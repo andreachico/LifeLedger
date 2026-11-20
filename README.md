@@ -1,4 +1,4 @@
-# go-expense-tracker
+# life-finance-tracker
 
 [![CI](https://github.com/andreachico/go-expense-tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/andreachico/go-expense-tracker/actions/workflows/ci.yml)
 ![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)
@@ -7,13 +7,30 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)
 
-A full-stack personal finance tracker: a RESTful **Go + PostgreSQL** API paired
-with a **Next.js + TypeScript** dashboard, all runnable in Docker. It tracks
-expenses, income, savings, investments, debts (one-time payments and installment
-plans), and a per-month budget sheet — all behind cookie-based authentication, so
-each user sees only their own data. A learning project focused on Go backend
-development, REST APIs, database integration, testing, clean project structure,
-and a modern React frontend.
+A full-stack personal **finance, habit & life planner**: a RESTful **Go +
+PostgreSQL** API paired with a **Next.js + TypeScript** dashboard, all runnable in
+Docker. Beyond money — expenses, income, savings, investments, debts (one-time
+payments and installment plans), and a per-month budget sheet — it also tracks
+**daily habits** with a check-in grid and streaks, a **Year at a Glance**
+calendar (public holidays, birthdays, vacation & sick days), and a **travel fund
+planner**. Everything sits behind cookie-based authentication, so each user sees
+only their own data. A learning project focused on Go backend development, REST
+APIs, database integration, testing, clean project structure, and a modern React
+frontend.
+
+## Highlights
+
+- 💸 **Finance** — expenses, income, savings, investments, debts, and a
+  per-month budget sheet with spending-overview charts
+- ✅ **Habit tracker** — daily/weekly/weekday habits with a check-in grid,
+  per-habit colors, categories, and streak tracking
+- 📅 **Year at a Glance** — a whole-year calendar seeding German/Berlin public
+  holidays automatically, plus your own birthdays, vacation and sick days (with
+  carryover-vacation accounting)
+- ✈️ **Travel planner** — plan trips with per-item budgets and derive how much to
+  set aside each month, matched against budget-sheet sinking funds
+- 🎨 **Personalization** — user-defined expense categories with a pastel icon
+  picker, and editable fund/holding catalogs — all stored per account
 
 ## Architecture
 
@@ -30,7 +47,7 @@ flowchart LR
     mux --> mw[logging middleware]
     mw --> pub["/health, /auth/*"]
     mw --> guard[RequireAuth]
-    guard --> handlers["expense / budget / income / savings / investment / debt handlers"]
+    guard --> handlers["expense / budget / income / savings / investment / debt / habit / userdoc handlers"]
     handlers -->|Store interface| iface{{Store}}
     iface --> mem[MemoryStore]
     iface --> pg[PostgresStore]
@@ -46,20 +63,22 @@ go-expense-tracker/
 ├── .dockerignore               # keeps the Docker build context small
 ├── docker-compose.yml          # runs the full stack: app + PostgreSQL
 ├── db/
-│   └── schema.sql              # users, expenses, income, savings, investments, debts, budget tables
+│   └── schema.sql              # users, expenses, income, savings, investments, debts, budget, habits, documents
 ├── internal/
 │   ├── auth/                   # user accounts, bcrypt passwords, signed session cookies, RequireAuth
 │   ├── expense/                # expense model, Store interface, in-memory + Postgres impls, handlers
-│   ├── budget/                 # per-month budget sheet (flat key/value plan)
+│   ├── budget/                 # per-month budget sheet + personalized type/category options with icons
 │   ├── income/                 # monthly income sources
-│   ├── savings/                # monthly savings entries
-│   ├── investment/             # monthly investment entries
-│   └── debt/                   # one-time payments + installment plans (Ratenzahlungen)
+│   ├── savings/                # monthly savings entries + reusable fund catalog
+│   ├── investment/             # monthly investment entries + reusable holding catalog
+│   ├── debt/                   # one-time payments + installment plans (Ratenzahlungen)
+│   ├── habit/                  # daily/weekly habits with per-date check-ins
+│   └── userdoc/                # generic per-user JSON documents (travel plan, year calendar, budget targets)
 ├── test/
 │   └── integration/            # DB-backed tests (run with -tags=integration)
 └── web/                        # Next.js frontend (App Router, TypeScript, Tailwind)
     └── src/
-        ├── app/                # login + a page per resource (server + client components)
+        ├── app/                # login + a page per feature (expenses, budget, habits, year, travel, …)
         └── lib/                # typed API client and server-side data loader
 ```
 
@@ -138,8 +157,9 @@ Open http://localhost:3000. The browser calls same-origin `/api/*`, which
 Next.js proxies to the Go API on `:8080` (configured in `web/next.config.ts`),
 so there's no CORS setup. You'll land on the login page first — register an
 account, then the sidebar gives you expenses, the budget sheet, income, savings,
-investments, and debts. Initial data is server-rendered; create/update/delete
-happen client-side.
+investments, debts, the habit tracker, the Year at a Glance calendar, and the
+travel planner. Initial data is server-rendered; create/update/delete happen
+client-side.
 
 ### Full stack in Docker (app + database)
 
@@ -218,12 +238,65 @@ stored as a single-month plan; `PATCH` advances how many months have been paid.
 ### Budget sheet
 
 A month's plan is a flat map of `"section:row"` keys to entries; saving replaces
-the whole month.
+the whole month. The Type/Category dropdowns are personalized per account via
+`type-options` (each option carries an optional preset icon).
 
-| Method | Path             | Body (JSON)                                           | Success |
-|--------|------------------|-------------------------------------------------------|---------|
-| GET    | `/budget?month=` | –                                                     | 200     |
-| PUT    | `/budget?month=` | `{ "fix:miete": {type, category, amount, due}, ... }` | 200     |
+| Method | Path                     | Body (JSON)                                           | Success |
+|--------|--------------------------|-------------------------------------------------------|---------|
+| GET    | `/budget?month=`         | –                                                     | 200     |
+| PUT    | `/budget?month=`         | `{ "fix:miete": {type, category, amount, due}, ... }` | 200     |
+| GET    | `/budget/breakdown`      | –                                                     | 200     |
+| GET    | `/budget/type-options`   | –                                                     | 200     |
+| PUT    | `/budget/type-options`   | `{ "variable": [{name, icon?}, ...], ... }`           | 200     |
+
+### Habits
+
+Daily/weekly/weekday habits with a per-date check-in grid. Each habit has a name,
+category, accent color, and schedule; check-ins are `YYYY-MM-DD` dates toggled
+one at a time.
+
+| Method | Path                            | Body (JSON)                                              | Success |
+|--------|---------------------------------|---------------------------------------------------------|---------|
+| GET    | `/habits`                       | –                                                       | 200     |
+| POST   | `/habits`                       | `{name, category, color, frequency, weekdays?}`         | 201     |
+| PUT    | `/habits/{id}`                  | same shape as `POST`                                    | 200     |
+| DELETE | `/habits/{id}`                  | –                                                       | 204     |
+| PUT    | `/habits/{id}/checkins/{date}`  | –                                                       | 204     |
+| DELETE | `/habits/{id}/checkins/{date}`  | –                                                       | 204     |
+
+`frequency` is one of `daily`, `weekly`, or `weekdays`; `weekdays` is an array of
+`0`=Sunday .. `6`=Saturday, used only when `frequency` is `"weekdays"`.
+
+### Reusable catalogs
+
+Savings funds and investment holdings are reusable, per-account name catalogs that
+power the dropdowns on those pages (renaming/deleting here updates future rows).
+
+| Method | Path                        | Body (JSON)              | Success |
+|--------|-----------------------------|-------------------------|---------|
+| GET    | `/savings/funds`            | –                       | 200     |
+| POST   | `/savings/funds`            | `{name}`                | 201     |
+| PATCH  | `/savings/funds`            | `{oldName, newName}`    | 200     |
+| DELETE | `/savings/funds?name=`      | –                       | 204     |
+| GET    | `/investments/holdings`     | –                       | 200     |
+| POST   | `/investments/holdings`     | `{name}`                | 201     |
+| PATCH  | `/investments/holdings`     | `{oldName, newName}`    | 200     |
+| DELETE | `/investments/holdings?name=` | –                     | 204     |
+
+### Per-user documents
+
+A generic key/value store of opaque JSON blobs scoped per account — it backs
+features whose shape is owned entirely by the frontend (the travel plan, the Year
+at a Glance calendar, and monthly budget targets), so their data syncs across
+devices. Keys match `^[a-zA-Z0-9_.-]{1,64}$` and bodies are capped at ~1 MiB.
+
+| Method | Path             | Body (JSON)          | Success |
+|--------|------------------|----------------------|---------|
+| GET    | `/userdoc/{key}` | –                    | 200     |
+| PUT    | `/userdoc/{key}` | any valid JSON value | 204     |
+
+Reading a key that was never saved returns `null`. Current keys:
+`travel-destinations`, `year-events`, `expense-budgets`.
 
 ### Examples
 
@@ -264,6 +337,11 @@ go test -tags=integration ./test/integration/...
 ## Features
 
 - Multi-resource personal finance API: expenses, income, savings, investments, debts (one-time + installment plans), and a per-month budget sheet
+- Habit tracker: daily/weekly/weekday habits with a per-date check-in grid, per-habit colors, categories, and streaks
+- Year at a Glance: whole-year calendar seeding German/Berlin public holidays automatically, plus user birthdays, vacation & sick days with carryover-vacation accounting
+- Travel planner: trips with per-item budgets and derived monthly set-aside, matched against budget-sheet sinking funds
+- Personalization stored per account: user-defined expense categories with a pastel icon picker, and reusable savings-fund / investment-holding catalogs
+- Generic per-user document store (`/userdoc/{key}`) so frontend-owned data (travel, year calendar, budget targets) syncs across devices
 - Cookie-based authentication: bcrypt password hashing, signed HttpOnly session cookies, and `RequireAuth` middleware — all data scoped per user
 - A `Store` interface per domain so storage can be swapped without touching the handlers
 - In-memory and PostgreSQL (`pgx`) storage backends, selected at startup
@@ -271,7 +349,7 @@ go test -tags=integration ./test/integration/...
 - Unit tests (`httptest`, interface stubs) and integration tests (`-tags=integration`), `go vet` + `go test -race` clean
 - Multi-stage `Dockerfile` (~20 MB distroless image) and full stack via `docker compose up --build`
 - Graceful shutdown (SIGINT/SIGTERM), request logging middleware, and GitHub Actions CI
-- Frontend: Next.js (App Router) + TypeScript + Tailwind CSS, with login/register, a sidebar workspace, and a page per resource
+- Frontend: Next.js (App Router) + TypeScript + Tailwind CSS, with login/register, a sidebar workspace, and a page per feature
 - Spending overview charts and inline row editing (e.g. editable debt rows with payment-progress tracking)
 - Server-rendered initial data; create/update/delete handled client-side via a typed, reusable API client
 - Same-origin `/api/*` proxy to the Go backend (no CORS) and `.env` auto-loading via `godotenv`
