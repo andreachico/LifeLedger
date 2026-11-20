@@ -15,19 +15,6 @@ import {
 } from "@/lib/api";
 import BudgetDropdown from "../budget-dropdown";
 
-// Old localStorage key, kept only so any habits saved on this device before the
-// backend existed can be migrated once, then cleared.
-const STORAGE_KEY = "habit-tracker:habits";
-
-// Shape of the legacy localStorage habits, used only during migration.
-type LocalHabit = {
-  id?: string | number;
-  name?: string;
-  category?: string;
-  color?: string;
-  checkins?: string[];
-};
-
 // Suggestions offered in the category dropdown, merged with any the user adds.
 const DEFAULT_CATEGORIES = [
   "Wellbeing",
@@ -138,54 +125,12 @@ export default function HabitTracker({
   const [mounted, setMounted] = useState(false);
   const [modal, setModal] = useState<ModalState>(null);
 
-  // On first client render, mark mounted (so the date-dependent grid renders
-  // without a hydration mismatch) and run a one-time migration: if the backend
-  // has no habits yet but this browser has habits saved under the old
-  // localStorage key, push them to the backend so the user's existing logs
-  // aren't lost, then clear the local copy.
+  // On first client render, mark mounted so the date-dependent grid renders
+  // without a hydration mismatch. Habits are stored per-user in the backend, so
+  // there's nothing else to load here.
   useEffect(() => {
-    async function migrateLocalHabits() {
-      try {
-        if (initialHabits.length > 0) return;
-        const stored = window.localStorage.getItem(STORAGE_KEY);
-        if (!stored) return;
-        const local = JSON.parse(stored) as LocalHabit[];
-        if (!Array.isArray(local) || local.length === 0) return;
-
-        const migrated: Habit[] = [];
-        for (let i = 0; i < local.length; i++) {
-          const lh = local[i];
-          if (!lh || typeof lh.name !== "string" || lh.name.trim() === "") {
-            continue;
-          }
-          const created = await createHabit({
-            name: lh.name,
-            category: typeof lh.category === "string" ? lh.category : "",
-            color:
-              typeof lh.color === "string" && lh.color
-                ? lh.color
-                : HABIT_PALETTE[i % HABIT_PALETTE.length],
-            frequency: "daily",
-            weekdays: [],
-          });
-          for (const date of lh.checkins ?? []) {
-            if (typeof date === "string") {
-              await addHabitCheckin(created.id, date);
-              created.checkins.push(date);
-            }
-          }
-          migrated.push(created);
-        }
-        if (migrated.length > 0) setHabits(migrated);
-        window.localStorage.removeItem(STORAGE_KEY);
-      } catch {
-        // If migration fails, leave localStorage intact and keep backend data.
-      }
-    }
-
-    void migrateLocalHabits();
     setMounted(true);
-  }, [initialHabits]);
+  }, []);
 
   const totalDays = daysInMonth(year, month);
   const days = useMemo(
@@ -586,6 +531,7 @@ export default function HabitTracker({
       <div className="max-w-xl">
         <CompletionDonut
           segments={habits.map((h) => ({
+            id: h.id,
             name: h.name,
             count: achievedCount(h),
             target: expectedCount(h),
@@ -941,7 +887,7 @@ function CompletionDonut({
   monthPct,
   monthLabel,
 }: {
-  segments: { name: string; count: number; target: number; color: string }[];
+  segments: { id: number; name: string; count: number; target: number; color: string }[];
   possibleCheckins: number;
   totalCheckins: number;
   monthPct: number;
@@ -992,7 +938,7 @@ function CompletionDonut({
                 cumulative += fraction;
                 return (
                   <circle
-                    key={s.name}
+                    key={s.id}
                     cx="80"
                     cy="80"
                     r={radius}
@@ -1020,7 +966,7 @@ function CompletionDonut({
             <li className="text-amber-900/60">No check-ins yet this month.</li>
           ) : (
             segments.map((s) => (
-              <li key={s.name} className="flex items-center gap-3">
+              <li key={s.id} className="flex items-center gap-3">
                 <span
                   className="h-3 w-3 shrink-0 rounded-full"
                   style={{ backgroundColor: s.color }}
