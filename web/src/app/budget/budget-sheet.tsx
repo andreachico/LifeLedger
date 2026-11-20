@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { BudgetPlan, Expense } from "@/lib/types";
 import { getIncome, saveBudgetPlan } from "@/lib/api";
+import { useUserId, userScopedKey } from "@/lib/use-user";
 import SpendingCharts, { type OverviewBucket } from "../spending-charts";
 import BudgetDropdown from "../budget-dropdown";
 
@@ -66,89 +67,25 @@ type Section = {
   rows: Row[];
 };
 
-const FIXKOSTEN: Row[] = [
-  { id: "miete", type: "Wohnen", category: "Miete", amount: "595.00", due: "03/01/2027" },
-  { id: "strom", type: "Wohnen", category: "Strom", amount: "42.00", due: "07/01/2027" },
-  { id: "wlan", type: "Wohnen", category: "Vodafone WLAN", amount: "10.00", due: "14/01/2027" },
-  { id: "ph", type: "Family", category: "PH", amount: "400.00", due: "" },
-  { id: "simkarte", type: "Phone", category: "Simkarte", amount: "12.00", due: "17/01/2027" },
-  { id: "applecloud", type: "Abonnement", category: "Apple Cloud", amount: "9.99", due: "03/01/2027" },
-  { id: "urbansports", type: "Abonnement", category: "Urban Sports Club", amount: "", due: "" },
-  { id: "fitx", type: "Abonnement", category: "FitX", amount: "24.00", due: "01/01/2027" },
-  { id: "zahnzusatz", type: "Versicherungen", category: "Zahnzusatz", amount: "20.40", due: "04/01/2027" },
-  { id: "fahrkarte", type: "Abonnement", category: "Fahrkarte", amount: "59.85", due: "01/01/2027" },
-];
+const FIXKOSTEN: Row[] = [];
 
-const SINKING_FUNDS: Row[] = [
-  { id: "hausrat", type: "Insurances & Bill", category: "Hausratversicherung", amount: "" },
-  { id: "haftpflicht", type: "Insurances & Bill", category: "Haftpflichtversicherung", amount: "" },
-  { id: "rundfunk", type: "Insurances & Bill", category: "Rundfunkbeitrag", amount: "28.00" },
-  { id: "stromrechnung", type: "Insurances & Bill", category: "Strom Rechnungsbetrag", amount: "" },
-  { id: "aircon", type: "PH Home", category: "Aircon 2.5HP PH", amount: "390.00" },
-  { id: "newyeargift", type: "Geschenk", category: "New year gift", amount: "30.00" },
-  { id: "homeph2027", type: "PH Home", category: "Home PH 2027", amount: "190.00" },
-  { id: "homeph2028", type: "PH Home", category: "Home PH 2028", amount: "100.00" },
-  { id: "paris", type: "Travel", category: "Paris 03/2027", amount: "" },
-  { id: "goethe", type: "Alyssa in DE", category: "Alyssa Goethe Institut", amount: "" },
-  { id: "alyssa2028", type: "Alyssa in DE", category: "Alyssa Germany 2028", amount: "" },
-  { id: "phplane2028", type: "Travel", category: "PH plane ticket 2028", amount: "" },
-  { id: "phxmas", type: "Geschenk", category: "PH Christmas Gift", amount: "" },
-  { id: "dexmas", type: "Geschenk", category: "DE Christmas Gift", amount: "" },
-];
-
-const RATENZAHLUNGEN: Row[] = [
-  { id: "bcn", type: "Travel", category: "BCN Flugticket", amount: "45.00", due: "24/12/2026" },
-  { id: "sony", type: "Credit", category: "Sony A6400", amount: "69.87", due: "27/12/2026" },
-  { id: "macbook", type: "Credit", category: 'Macbook Pro 14"', amount: "54.00", due: "25/01/2027" },
-  { id: "iphone", type: "Credit", category: "iPhone", amount: "31.00", due: "24/01/2027" },
-];
-
-const BIRTHDAYS: Row[] = [
-  { id: "mamadaddy", type: "Geschenk", category: "Mama/Daddy Geburtstag", amount: "" },
-  { id: "monika", type: "Geschenk", category: "Monika Geburtstag", amount: "" },
-  { id: "aldred", type: "Geschenk", category: "Aldred Geburtstag", amount: "" },
-  { id: "joni", type: "Geschenk", category: "Joni Geburtstag", amount: "" },
-  { id: "luise", type: "Geschenk", category: "Luise Geburtstag", amount: "" },
-  { id: "steffi", type: "Geschenk", category: "Steffi Geburtstag", amount: "" },
-];
-
-const INVESTMENTS: Row[] = [
-  { id: "sp500", type: "Investment", category: "S&P", amount: "0.00" },
-  { id: "ethereum", type: "Investment", category: "Ethereum", amount: "0.00" },
-  { id: "xrp", type: "Investment", category: "XRP", amount: "0.00" },
-];
-
-const SAVINGS: Row[] = [
-  { id: "emergency", type: "Savings", category: "Emergency Fund", amount: "0.00" },
-  { id: "travel", type: "Savings", category: "Travel Fund", amount: "0.00" },
-  { id: "ph", type: "Savings", category: "PH Fund", amount: "0.00" },
-];
-
+// The only built-in sections. Fixkosten and Others live here; Variable Kosten is
+// rendered separately but is also a default. Everything else is a table the user
+// creates and names themselves, persisted per-account in the backend plan.
 const SECTIONS: Section[] = [
   { id: "fix", title: "Fixkosten", showDue: true, rows: FIXKOSTEN },
-  { id: "investments", title: "Investments", showDue: false, rows: INVESTMENTS },
-  { id: "savings", title: "Savings", showDue: false, rows: SAVINGS },
-  { id: "sinking", title: "Sinking Funds", showDue: false, rows: SINKING_FUNDS },
-  { id: "raten", title: "Ratenzahlungen", showDue: true, rows: RATENZAHLUNGEN },
-  { id: "birthdays", title: "Birthdays", showDue: false, rows: BIRTHDAYS },
   { id: "others", title: "Others", showDue: false, rows: [] },
 ];
 
 // The built-in tables every user starts with. Fixkosten and Others live in
 // SECTIONS above; Variable Kosten is rendered separately but is also a default.
-// Every other built-in section (Investments, Savings, …) is NOT a default: it
-// only appears for accounts that already have data in it, so new users begin
-// with just these three and add their own tables as they like.
+// These three are the only non-removable tables; any other section is a
+// user-created table saved to the backend.
 const DEFAULT_SECTION_IDS = new Set(["fix", "others"]);
 
 // Variable Kosten has its own Soll / Ist layout, kept separate from the
 // Type / Category / Budget sections above.
-const VARIABLE_KOSTEN: Row[] = [
-  { id: "grocery", type: "Groceries & Household", category: "Grocery", amount: "200.00" },
-  { id: "drogerie", type: "Groceries & Household", category: "Drogerie", amount: "50.00" },
-  { id: "dining", type: "Dining Out", category: "Wolt / Restaurant", amount: "20.00" },
-  { id: "leisure", type: "Leisure", category: "Freizeit/Allowance", amount: "110.00" },
-];
+const VARIABLE_KOSTEN: Row[] = [];
 
 // Each table keeps its own Type choices. They start empty for every user and are
 // added per section, persisted to localStorage as { [sectionId]: string[] }.
@@ -163,19 +100,64 @@ type CustomTable = {
   showType: boolean;
 };
 
-// Decode custom tables from a backend plan's "table:<id>" markers.
+// Friendly titles for sections that used to ship as built-ins, so a returning
+// account's existing data keeps a readable heading after those presets became
+// ordinary user tables.
+const LEGACY_TITLES: Record<string, string> = {
+  investments: "Investments",
+  savings: "Savings",
+  sinking: "Sinking Funds",
+  raten: "Ratenzahlungen",
+  birthdays: "Birthdays",
+};
+const LEGACY_SHOW_DUE = new Set(["raten"]);
+
+// Section ids that are never user tables: the defaults plus the synthetic ones.
+const RESERVED_SECTION_IDS = new Set([
+  ...DEFAULT_SECTION_IDS,
+  "variable",
+  "meta",
+  "hidden",
+]);
+
+// Decode user tables from a backend plan. Tables are stored as "table:<id>"
+// markers, but any other non-reserved section that carries data (e.g. a legacy
+// preset like "savings") is surfaced as a table too, so existing data keeps a
+// home and migrates into the user-table system on the next save.
 function extractTables(plan: BudgetPlan): CustomTable[] {
   const tables: CustomTable[] = [];
+  const seen = new Set<string>();
   for (const key of Object.keys(plan)) {
     if (!key.startsWith("table:")) continue;
     const id = key.slice("table:".length);
     const entry = plan[key];
+    seen.add(id);
     tables.push({
       id,
       title: entry.category,
       showDue: entry.type === "due",
       // Tables saved before this flag existed have no marker -> keep the column.
       showType: entry.due !== "notype",
+    });
+  }
+  for (const key of Object.keys(plan)) {
+    const idx = key.indexOf(":");
+    if (idx === -1) continue;
+    const section = key.slice(0, idx);
+    if (
+      section === "table" ||
+      section === "override" ||
+      section === "hidden" ||
+      RESERVED_SECTION_IDS.has(section) ||
+      seen.has(section)
+    )
+      continue;
+    seen.add(section);
+    tables.push({
+      id: section,
+      title: LEGACY_TITLES[section] ?? section,
+      showDue: LEGACY_SHOW_DUE.has(section),
+      showType: true,
     });
   }
   return tables;
@@ -220,7 +202,7 @@ function seedValues(): Values {
   );
   // Monthly income, kept under a synthetic "meta" section so it persists with
   // the rest of the plan.
-  seed.meta = { paycheck: "2555.00" };
+  seed.meta = { paycheck: "" };
   return seed;
 }
 
@@ -415,21 +397,25 @@ export default function BudgetSheet({
     Record<string, SectionOverride>
   >(() => extractOverrides(initialPlan));
 
-  // Non-default built-in sections the user deleted this session, so they are
-  // hidden immediately (their data is also cleared, so they stay gone on reload).
-  const [deletedSections, setDeletedSections] = useState<Set<string>>(
-    () => new Set(),
-  );
-
   // Personalizable Type choices, kept separately per table (section id). Each
   // section starts empty and is merged with the user's saved additions
   // (localStorage). Same initial value on server & client to avoid a hydration
-  // mismatch.
+  // mismatch. The storage key is namespaced per user so Type options added by
+  // one account don't leak into another on the same browser; options saved under
+  // the old global key are migrated into this account once, then the global copy
+  // is deleted.
+  const { userId, ready: userReady } = useUserId();
   const [typeOptions, setTypeOptions] = useState<Record<string, string[]>>({});
   const [typeOptionsLoaded, setTypeOptionsLoaded] = useState(false);
   useEffect(() => {
+    if (!userReady) return;
     try {
-      const raw = localStorage.getItem(TYPE_OPTIONS_KEY);
+      // Read ONLY this account's namespaced options. The old global (un-scoped)
+      // key is purged rather than adopted, so a freshly created account can never
+      // inherit another account's Type choices on a shared browser. Types already
+      // used on saved rows still populate the dropdowns via typesFor().
+      localStorage.removeItem(TYPE_OPTIONS_KEY);
+      const raw = localStorage.getItem(userScopedKey(TYPE_OPTIONS_KEY, userId));
       if (raw) {
         const stored = JSON.parse(raw);
         if (stored && typeof stored === "object" && !Array.isArray(stored)) {
@@ -440,11 +426,14 @@ export default function BudgetSheet({
       // Ignore malformed storage.
     }
     setTypeOptionsLoaded(true);
-  }, []);
+  }, [userReady, userId]);
   useEffect(() => {
     if (!typeOptionsLoaded) return;
-    localStorage.setItem(TYPE_OPTIONS_KEY, JSON.stringify(typeOptions));
-  }, [typeOptions, typeOptionsLoaded]);
+    localStorage.setItem(
+      userScopedKey(TYPE_OPTIONS_KEY, userId),
+      JSON.stringify(typeOptions),
+    );
+  }, [typeOptions, typeOptionsLoaded, userId]);
 
   function addTypeOption(sectionId: string, value: string) {
     const t = value.trim();
@@ -765,39 +754,7 @@ export default function BudgetSheet({
     });
   }
 
-  // Delete a non-default built-in section. Its data, hidden-row markers and any
-  // override are cleared so nothing persists, and it is hidden right away. The
-  // three default tables (Fixkosten, Variable Kosten, Other) are never deletable.
-  function deleteBuiltinSection(id: string) {
-    if (DEFAULT_SECTION_IDS.has(id)) return;
-    setEdited(true);
-    setDeletedSections((prev) => new Set(prev).add(id));
-    setCustomRows((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-    setValues((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-    setHidden((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-    setSectionOverrides((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-    setTypeOptions((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-  }
+  // Rename / toggle columns on a user table via the edit-table modal.
   function saveTable(
     id: string,
     data: { title: string; showDue: boolean; showType: boolean },
@@ -893,23 +850,6 @@ export default function BudgetSheet({
     };
   }
 
-  // Non-default built-in sections (Investments, Savings, …) only show for
-  // accounts that already have data in them: an entry, a deleted-row marker, or
-  // an override in this month's loaded plan. New accounts therefore start with
-  // just the default tables.
-  const activeExtraSections = new Set(
-    SECTIONS.filter((s) => !DEFAULT_SECTION_IDS.has(s.id))
-      .map((s) => s.id)
-      .filter((id) =>
-        Object.keys(initialPlan).some(
-          (k) =>
-            k.startsWith(`${id}:`) ||
-            k.startsWith(`hidden:${id}:`) ||
-            k === `override:${id}`,
-        ),
-      ),
-  );
-
   // Total of a section's visible built-in rows plus any custom rows.
   const sectionTotal = (sectionId: string, builtinRows: Row[]) =>
     builtinRows.reduce(
@@ -939,11 +879,11 @@ export default function BudgetSheet({
   const whereItWent = [
     { category: "Fixkosten", amount: sectionTotal("fix", FIXKOSTEN) },
     { category: "Variable Kosten", amount: variableTotal },
-    { category: "Investments", amount: sectionTotal("investments", INVESTMENTS) },
-    { category: "Sinking Funds", amount: sectionTotal("sinking", SINKING_FUNDS) },
-    { category: "Birthdays", amount: sectionTotal("birthdays", BIRTHDAYS) },
     { category: "Others", amount: sectionTotal("others", []) },
-    { category: "Ratenzahlungen", amount: sectionTotal("raten", RATENZAHLUNGEN) },
+    ...customTables.map((t) => ({
+      category: t.title,
+      amount: sectionTotal(t.id, []),
+    })),
   ];
 
   // Six-month overall-expenses bar chart. The last bucket is the selected month;
@@ -1133,34 +1073,22 @@ export default function BudgetSheet({
           onAddType={(v) => addTypeOption("variable", v)}
         />
 
-        {SECTIONS.slice(1)
-          .filter(
-            (section) =>
-              !deletedSections.has(section.id) &&
-              (DEFAULT_SECTION_IDS.has(section.id) ||
-                activeExtraSections.has(section.id)),
-          )
-          .map((section) => (
-            <CostSection
-              key={section.id}
-              section={effectiveSection(section)}
-              amounts={values[section.id] ?? {}}
-              custom={customRows[section.id] ?? []}
-              hidden={hidden[section.id]}
-              typeOptions={typesFor(section.id)}
-              onAddRow={setModalSection}
-              onDeleteRow={deleteRow}
-              onEditRow={editRow}
-              onStartEdit={startEdit}
-              onAddType={(v) => addTypeOption(section.id, v)}
-              onEditTable={() => editBuiltin(section)}
-              onDeleteTable={
-                DEFAULT_SECTION_IDS.has(section.id)
-                  ? undefined
-                  : () => deleteBuiltinSection(section.id)
-              }
-            />
-          ))}
+        {SECTIONS.slice(1).map((section) => (
+          <CostSection
+            key={section.id}
+            section={effectiveSection(section)}
+            amounts={values[section.id] ?? {}}
+            custom={customRows[section.id] ?? []}
+            hidden={hidden[section.id]}
+            typeOptions={typesFor(section.id)}
+            onAddRow={setModalSection}
+            onDeleteRow={deleteRow}
+            onEditRow={editRow}
+            onStartEdit={startEdit}
+            onAddType={(v) => addTypeOption(section.id, v)}
+            onEditTable={() => editBuiltin(section)}
+          />
+        ))}
 
         {/* User-created tables, each rendered like a built-in cost section. */}
         {customTables.map((t) => (

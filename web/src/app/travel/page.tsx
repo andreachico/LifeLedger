@@ -7,6 +7,7 @@
 // localStorage, so no backend round-trip is needed.
 import { useEffect, useRef, useState } from "react";
 import { getBudgetBreakdown, getBudgetPlan } from "@/lib/api";
+import { adoptLegacyKey, useUserId, userScopedKey } from "@/lib/use-user";
 import DatePicker from "../date-picker";
 
 const currency = new Intl.NumberFormat("en-IE", {
@@ -52,47 +53,6 @@ const STATUS_META: Record<ItemStatus, { label: string; cls: string }> = {
 
 const STATUS_ORDER: ItemStatus[] = ["todo", "booked", "bookedpaid", "paid"];
 
-// Seed shown on first load (before anything is saved to localStorage).
-const SEED: Destination[] = [
-  {
-    id: "paris",
-    city: "Paris",
-    country: "France",
-    month: "2027-03",
-    dates: "25.03 – 29.03 · 5 days 4 nights",
-    items: [
-      { id: "p1", label: "Accommodation", note: "~ €464 total", budget: 232, status: "booked" },
-      { id: "p2", label: "Flights", budget: 200, status: "todo", flight: true },
-      { id: "p3", label: "Allowance / Food", budget: 200, status: "todo" },
-      { id: "p4", label: "Tourist attractions entrance", budget: 122, status: "todo" },
-    ],
-  },
-  {
-    id: "lisbon",
-    city: "Lisbon",
-    country: "Portugal",
-    month: "2027-05",
-    dates: "12.05 – 16.05 · 5 days 4 nights",
-    items: [
-      { id: "l1", label: "Accommodation", budget: 300, status: "todo" },
-      { id: "l2", label: "Flights", budget: 180, status: "todo", flight: true },
-      { id: "l3", label: "Food & drinks", budget: 150, status: "todo" },
-    ],
-  },
-  {
-    id: "barcelona",
-    city: "Barcelona",
-    country: "Spain",
-    month: "2027-09",
-    dates: "03.09 – 08.09 · 6 days 5 nights",
-    items: [
-      { id: "b1", label: "Accommodation", budget: 350, status: "todo" },
-      { id: "b2", label: "Flights", budget: 160, status: "todo", flight: true },
-      { id: "b3", label: "Activities", budget: 145, status: "todo" },
-    ],
-  },
-];
-
 // The current "YYYY-MM" month.
 const currentMonth = () => new Date().toISOString().slice(0, 7);
 
@@ -136,6 +96,7 @@ function statsFor(dest: Destination, refMonth: string, eingezahlt: number) {
 }
 
 export default function TravelPage() {
+  const { userId, ready } = useUserId();
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [refYear, setRefYear] = useState(() => String(new Date().getFullYear()));
@@ -150,22 +111,29 @@ export default function TravelPage() {
     { destId: string; item?: TripItem } | null
   >(null);
 
-  // Load once on mount. Same initial empty value on server & client avoids a
-  // hydration mismatch; the flag then gates the save effect.
+  // Load once the account id is known. Same initial empty value on server &
+  // client avoids a hydration mismatch; the storage key is namespaced per user.
+  // Any data saved under the old global key is migrated into this account once
+  // (and the global copy deleted), so existing data is kept while a freshly
+  // created account starts empty instead of inheriting it.
   useEffect(() => {
+    if (!ready) return;
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      setDestinations(raw ? (JSON.parse(raw) as Destination[]) : SEED);
+      const raw = adoptLegacyKey(STORAGE_KEY, userId);
+      setDestinations(raw ? (JSON.parse(raw) as Destination[]) : []);
     } catch {
-      setDestinations(SEED);
+      setDestinations([]);
     }
     setLoaded(true);
-  }, []);
+  }, [ready, userId]);
 
   useEffect(() => {
     if (!loaded) return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(destinations));
-  }, [destinations, loaded]);
+    localStorage.setItem(
+      userScopedKey(STORAGE_KEY, userId),
+      JSON.stringify(destinations),
+    );
+  }, [destinations, loaded, userId]);
 
   // Load how much has already been paid into each trip's sinking fund from the
   // budget sheet. Amounts are summed across every saved month; labels come from

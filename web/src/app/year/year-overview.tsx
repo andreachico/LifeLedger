@@ -5,6 +5,7 @@
 // computed per year (including Easter-based movable dates); the user can add
 // their own birthdays and vacation days, which persist to localStorage.
 import { useEffect, useMemo, useState } from "react";
+import { adoptLegacyKey, useUserId, userScopedKey } from "@/lib/use-user";
 import BudgetDropdown from "../budget-dropdown";
 import DatePicker from "../date-picker";
 
@@ -193,6 +194,7 @@ function berlinHolidays(year: number): CalEvent[] {
 }
 
 export default function YearOverview() {
+  const { userId, ready } = useUserId();
   const [year, setYear] = useState(new Date().getFullYear());
   const [events, setEvents] = useState<CalEvent[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -200,27 +202,34 @@ export default function YearOverview() {
   // or null when closed.
   const [modalDate, setModalDate] = useState<string | null>(null);
 
-  // Load persisted user events once on the client, after mount. Starting empty
-  // on both server and client keeps the initial render identical.
+  // Load persisted user events once the account id is known. Starting empty on
+  // both server and client keeps the initial render identical. The storage key
+  // is namespaced per user; any events saved under the old global key are
+  // migrated into this account once (and the global copy deleted), so existing
+  // events are kept while a freshly created account starts empty.
   useEffect(() => {
+    if (!ready) return;
     try {
-      const stored = window.localStorage.getItem(STORAGE_KEY);
+      const stored = adoptLegacyKey(STORAGE_KEY, userId);
       if (stored) setEvents(JSON.parse(stored));
     } catch {
       // Ignore malformed/unavailable storage.
     }
     setLoaded(true);
-  }, []);
+  }, [ready, userId]);
 
   // Save user events whenever they change.
   useEffect(() => {
     if (!loaded) return;
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(events));
+      window.localStorage.setItem(
+        userScopedKey(STORAGE_KEY, userId),
+        JSON.stringify(events),
+      );
     } catch {
       // Ignore storage errors (e.g. private mode / quota).
     }
-  }, [events, loaded]);
+  }, [events, loaded, userId]);
 
   // Seeded holidays for the selected year, combined with the user's own events.
   const holidays = useMemo(() => berlinHolidays(year), [year]);
