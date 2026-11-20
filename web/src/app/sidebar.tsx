@@ -163,6 +163,33 @@ export default function Sidebar() {
         Workspace
       </div>
       <nav className="flex flex-col gap-4">
+        <Link
+          href="/overview"
+          aria-current={pathname === "/overview" ? "page" : undefined}
+          className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium ${
+            pathname === "/overview"
+              ? "bg-amber-900/90 text-amber-50"
+              : "text-amber-900/70 hover:bg-amber-900/5"
+          }`}
+        >
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <rect x="3" y="3" width="7" height="9" rx="1" />
+            <rect x="14" y="3" width="7" height="5" rx="1" />
+            <rect x="14" y="12" width="7" height="9" rx="1" />
+            <rect x="3" y="16" width="7" height="5" rx="1" />
+          </svg>
+          Dashboard
+        </Link>
         {NAV_GROUPS.map((group) => (
           <div key={group.title} className="flex flex-col gap-1">
             <div className="px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider text-amber-900/40">
