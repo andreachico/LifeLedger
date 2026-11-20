@@ -2,34 +2,48 @@
 
 // Savings page: each fund's running total combines deposits planned in the
 // Budget sheet (summed per month) with withdrawals recorded here. A deposit adds
-// to the total; a withdrawal subtracts from it. The three funds are shown side
-// by side, each listing its monthly activity. Only withdrawals are editable —
-// deposits come from the budget.
+// to the total; a withdrawal subtracts from it. Funds are defined by the user —
+// add your own from the "Withdraw from" dropdown — and persist per account. Only
+// withdrawals are editable here; deposits come from the budget.
 import { useCallback, useEffect, useState } from "react";
 import {
   createSaving,
+  createSavingsFund,
   deleteSaving,
+  deleteSavingsFund,
   getBudgetBreakdown,
   getSavings,
+  getSavingsFunds,
+  renameSavingsFund,
 } from "@/lib/api";
 import type { Saving } from "@/lib/types";
+import BudgetDropdown from "../budget-dropdown";
+import ConfirmDialog from "../confirm-dialog";
+import DatePicker from "../date-picker";
 
-// The funds shown here, mapped to their budget entry keys ("<section>:<row>")
-// from the budget sheet's Savings section. Withdrawals are stored under `label`,
-// so the dropdown and the budget keys stay in sync.
-const FUNDS = [
-  { key: "savings:emergency", label: "Emergency Fund" },
-  { key: "savings:travel", label: "Travel Fund" },
-  { key: "savings:ph", label: "PH Fund" },
-] as const;
+// Friendly labels for funds that used to ship as built-ins, so a returning
+// account's budget deposits keep a readable name.
+const LEGACY_LABELS: Record<string, string> = {
+  emergency: "Emergency Fund",
+  travel: "Travel Fund",
+  ph: "PH Fund",
+};
+
+// Turn a budget "savings:<id>" entry key into a display label.
+function keyToLabel(entryKey: string): string {
+  const id = entryKey.slice(entryKey.indexOf(":") + 1);
+  if (LEGACY_LABELS[id]) return LEGACY_LABELS[id];
+  const spaced = id.replace(/[-_]/g, " ");
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
 
 const currency = new Intl.NumberFormat("en-IE", {
   style: "currency",
   currency: "EUR",
 });
 
-// The current "YYYY-MM" month, used to seed the withdrawal form.
-const currentMonth = () => new Date().toISOString().slice(0, 7);
+// The current "YYYY-MM-DD" date, used to seed the withdrawal form.
+const currentDate = () => new Date().toISOString().slice(0, 10);
 
 // Format a "YYYY-MM" key as e.g. "October 2026".
 function monthLabel(month: string): string {
@@ -52,19 +66,26 @@ export default function SavingsPage() {
     Record<string, Record<string, number>>
   >({});
   const [withdrawals, setWithdrawals] = useState<Saving[]>([]);
+  const [funds, setFunds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  const [name, setName] = useState<string>(FUNDS[0].label);
-  const [month, setMonth] = useState(() => currentMonth());
+  const [name, setName] = useState("");
+  const [date, setDate] = useState(() => currentDate());
   const [amount, setAmount] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [b, s] = await Promise.all([getBudgetBreakdown(), getSavings()]);
+      const [b, s, f] = await Promise.all([
+        getBudgetBreakdown(),
+        getSavings(),
+        getSavingsFunds(),
+      ]);
       setBreakdown(b);
       setWithdrawals(s);
+      setFunds(f);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "failed to load savings");
@@ -77,16 +98,89 @@ export default function SavingsPage() {
     load();
   }, [load]);
 
+  // Add a fund to the backend catalog (ignoring case-insensitive dupes).
+  async function addFund(raw: string) {
+    const label = raw.trim();
+    if (!label) return;
+    if (funds.some((f) => f.toLowerCase() === label.toLowerCase())) return;
+    setFunds((prev) => [...prev, label]);
+    try {
+      await createSavingsFund(label);
+    } catch (err) {
+      setFunds((prev) => prev.filter((f) => f !== label));
+      setError(err instanceof Error ? err.message : "failed to add fund");
+    }
+  }
+
+  // Rename a user-added fund in the catalog. Since withdrawals have no update
+  // endpoint, any recorded withdrawals are recreated under the new name.
+  async function renameFund(oldLabel: string, newLabel: string) {
+    const trimmed = newLabel.trim();
+    if (!trimmed || trimmed === oldLabel) return;
+    const clash = funds.some(
+      (f) =>
+        f.toLowerCase() === trimmed.toLowerCase() &&
+        f.toLowerCase() !== oldLabel.toLowerCase(),
+    );
+    if (clash) {
+      setError("A fund with that name already exists.");
+      return;
+    }
+    setFunds((prev) => prev.map((f) => (f === oldLabel ? trimmed : f)));
+    if (name.toLowerCase() === oldLabel.toLowerCase()) setName(trimmed);
+    try {
+      await renameSavingsFund(oldLabel, trimmed);
+      const affected = withdrawals.filter(
+        (s) => s.name.toLowerCase() === oldLabel.toLowerCase(),
+      );
+      for (const s of affected) {
+        await createSaving({
+          name: trimmed,
+          amount: s.amount,
+          month: s.month,
+        });
+        await deleteSaving(s.id);
+      }
+      if (affected.length > 0) await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "failed to rename fund");
+      await load();
+    }
+  }
+
+  // Delete a user-added fund from the catalog along with any withdrawals.
+  async function deleteFund(label: string) {
+    const affected = withdrawals.filter(
+      (s) => s.name.toLowerCase() === label.toLowerCase(),
+    );
+    try {
+      await deleteSavingsFund(label);
+      for (const s of affected) await deleteSaving(s.id);
+      setWithdrawals((prev) =>
+        prev.filter((s) => s.name.toLowerCase() !== label.toLowerCase()),
+      );
+      setFunds((prev) =>
+        prev.filter((f) => f.toLowerCase() !== label.toLowerCase()),
+      );
+      if (name.toLowerCase() === label.toLowerCase()) setName("");
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "failed to delete fund");
+    }
+  }
+
   async function handleWithdraw(e: React.FormEvent) {
     e.preventDefault();
+    if (!name.trim()) return;
     setSubmitting(true);
     try {
       const created = await createSaving({
         name,
         amount: Number(amount),
-        month,
+        month: date.slice(0, 7),
       });
       setWithdrawals((prev) => [created, ...prev]);
+      addFund(name);
       setAmount("");
       setError(null);
     } catch (err) {
@@ -110,13 +204,34 @@ export default function SavingsPage() {
     }
   }
 
+  // The funds to show: the user's saved list, plus any fund that already has
+  // budget deposits or recorded withdrawals (so existing data never disappears).
+  const depositKeys = Object.keys(breakdown).filter((k) =>
+    k.startsWith("savings:"),
+  );
+  const fundLabels: string[] = [];
+  const seen = new Set<string>();
+  const pushLabel = (label: string) => {
+    const key = label.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    fundLabels.push(label);
+  };
+  funds.forEach(pushLabel);
+  depositKeys.forEach((k) => pushLabel(keyToLabel(k)));
+  withdrawals.forEach((s) => pushLabel(s.name));
+
   // Build each fund's rows (budget deposits + recorded withdrawals) and net total.
-  const fundData = FUNDS.map((fund) => {
-    const deposits: Row[] = Object.entries(breakdown[fund.key] ?? {})
+  const userFundSet = new Set(funds.map((f) => f.toLowerCase()));
+  const fundData = fundLabels.map((label) => {
+    const lower = label.toLowerCase();
+    const deposits: Row[] = depositKeys
+      .filter((k) => keyToLabel(k).toLowerCase() === lower)
+      .flatMap((k) => Object.entries(breakdown[k] ?? {}))
       .filter(([, amt]) => amt !== 0)
       .map(([m, amt]) => ({ month: m, amount: amt, kind: "deposit" as const }));
     const fundWithdrawals: Row[] = withdrawals
-      .filter((s) => s.name === fund.label)
+      .filter((s) => s.name.toLowerCase() === lower)
       .map((s) => ({
         month: s.month,
         amount: s.amount,
@@ -129,7 +244,7 @@ export default function SavingsPage() {
     const total =
       deposits.reduce((sum, r) => sum + r.amount, 0) -
       fundWithdrawals.reduce((sum, r) => sum + r.amount, 0);
-    return { ...fund, rows, total };
+    return { label, rows, total };
   });
 
   const overallTotal = fundData.reduce((sum, f) => sum + f.total, 0);
@@ -157,27 +272,28 @@ export default function SavingsPage() {
         className="flex flex-col gap-3 rounded-xl border border-amber-900/20 bg-white p-6 shadow-sm sm:flex-row sm:items-end"
       >
         <label className="flex min-w-0 flex-1 flex-col gap-1.5">
-          <span className="text-sm font-medium text-zinc-700">Withdraw from</span>
-          <select
+          <span className="text-sm font-medium text-zinc-700">
+            Withdraw from
+          </span>
+          <BudgetDropdown
             value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="rounded-lg border border-amber-900/20 bg-white px-3 py-2 text-sm text-zinc-900 focus:border-amber-700 focus:outline-none"
-          >
-            {FUNDS.map((f) => (
-              <option key={f.key} value={f.label}>
-                {f.label}
-              </option>
-            ))}
-          </select>
+            options={fundLabels}
+            onChange={setName}
+            onAddNew={addFund}
+            onRename={renameFund}
+            onDelete={(label) => setPendingDelete(label)}
+            isEditable={(label) => userFundSet.has(label.toLowerCase())}
+            placeholder="Select fund…"
+            addLabel="Add fund…"
+            ariaLabel="Fund to withdraw from"
+          />
         </label>
-        <label className="flex w-full flex-col gap-1.5 sm:w-40">
-          <span className="text-sm font-medium text-zinc-700">Month</span>
-          <input
-            type="month"
-            value={month}
-            onChange={(e) => setMonth(e.target.value)}
-            required
-            className="rounded-lg border border-amber-900/20 px-3 py-2 text-sm text-zinc-900 focus:border-amber-700 focus:outline-none"
+        <label className="flex w-full flex-col gap-1.5 sm:w-44">
+          <span className="text-sm font-medium text-zinc-700">Date</span>
+          <DatePicker
+            value={date}
+            onChange={setDate}
+            placeholder="Pick a date"
           />
         </label>
         <label className="flex w-full flex-col gap-1.5 sm:w-32">
@@ -195,7 +311,7 @@ export default function SavingsPage() {
         </label>
         <button
           type="submit"
-          disabled={submitting}
+          disabled={submitting || !name.trim()}
           className="rounded-lg bg-linear-to-r from-amber-900 to-amber-700 px-4 py-2 text-sm font-semibold text-amber-50 shadow-sm transition-all hover:from-amber-800 hover:to-amber-600 disabled:opacity-60"
         >
           {submitting ? "Saving…" : "Record withdrawal"}
@@ -212,11 +328,16 @@ export default function SavingsPage() {
         <p className="px-6 py-8 text-center text-sm text-amber-900/60">
           Loading…
         </p>
+      ) : fundLabels.length === 0 ? (
+        <p className="rounded-xl border border-dashed border-amber-900/25 bg-white px-6 py-10 text-center text-sm text-amber-900/60">
+          No funds yet. Use the “Withdraw from” dropdown above to add your first
+          fund.
+        </p>
       ) : (
         <div className="grid gap-4 md:grid-cols-3">
           {fundData.map((fund) => (
             <section
-              key={fund.key}
+              key={fund.label}
               className="overflow-hidden rounded-xl border border-amber-900/20 bg-white shadow-sm"
             >
               <div className="flex items-center justify-between gap-4 border-b border-amber-900/10 px-6 py-4">
@@ -296,6 +417,19 @@ export default function SavingsPage() {
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="Delete fund"
+        message={`Delete “${pendingDelete}” and any withdrawals recorded for it? This cannot be undone.`}
+        confirmLabel="Delete"
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          const label = pendingDelete;
+          setPendingDelete(null);
+          if (label) deleteFund(label);
+        }}
+      />
     </main>
   );
 }
