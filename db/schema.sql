@@ -99,3 +99,29 @@ CREATE TABLE IF NOT EXISTS budget_amounts (
     due       TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (user_id, month, entry_key)
 );
+
+-- Habits: one row per tracked habit, with a separate habit_checkins table
+-- recording each "YYYY-MM-DD" date the habit was completed. Colour is the accent
+-- shown in the UI. Frequency is "daily", "weekly" (once a week) or "weekdays";
+-- when "weekdays", the weekdays column holds the comma-separated days (0=Sun..6).
+-- Deleting a habit cascades to its check-ins.
+CREATE TABLE IF NOT EXISTS habits (
+    id        SERIAL PRIMARY KEY,
+    user_id   INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    name      TEXT NOT NULL,
+    category  TEXT NOT NULL DEFAULT '',
+    color     TEXT NOT NULL DEFAULT '',
+    frequency TEXT NOT NULL DEFAULT 'daily',
+    weekdays  TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS habits_user_idx ON habits (user_id);
+
+-- Add the schedule columns to databases created before they existed.
+ALTER TABLE habits ADD COLUMN IF NOT EXISTS frequency TEXT NOT NULL DEFAULT 'daily';
+ALTER TABLE habits ADD COLUMN IF NOT EXISTS weekdays TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS habit_checkins (
+    habit_id INTEGER NOT NULL REFERENCES habits (id) ON DELETE CASCADE,
+    date     DATE NOT NULL,
+    PRIMARY KEY (habit_id, date)
+);
