@@ -108,6 +108,16 @@ func (s *PostgresStore) Breakdown(ctx context.Context) (map[string]map[string]fl
 	return out, rows.Err()
 }
 
+// DeleteEntry removes an entry key from every month for the caller.
+func (s *PostgresStore) DeleteEntry(ctx context.Context, entryKey string) error {
+	if _, err := s.pool.Exec(ctx,
+		`DELETE FROM budget_amounts WHERE user_id = $1 AND entry_key = $2`,
+		auth.UserID(ctx), entryKey); err != nil {
+		return fmt.Errorf("deleting budget entry: %w", err)
+	}
+	return nil
+}
+
 // GetTypeOptions loads the caller's saved Type/Category options, grouped by
 // section id.
 func (s *PostgresStore) GetTypeOptions(ctx context.Context) (TypeOptions, error) {

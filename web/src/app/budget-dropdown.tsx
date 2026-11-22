@@ -16,6 +16,7 @@ export default function BudgetDropdown({
   onRename,
   onDelete,
   isEditable,
+  isDeletable,
   iconFor,
   onSetIcon,
   placeholder = "Select…",
@@ -30,6 +31,10 @@ export default function BudgetDropdown({
   onRename?: (oldValue: string, newValue: string) => void;
   onDelete?: (value: string) => void;
   isEditable?: (value: string) => boolean;
+  // Gates the delete action independently of rename. When omitted, delete falls
+  // back to `isEditable` (same as before). Lets a dropdown allow deleting any
+  // choice while keeping rename restricted to user-defined entries.
+  isDeletable?: (value: string) => boolean;
   // When provided, each option shows its chosen preset icon and the edit row
   // includes an icon picker. `iconFor` returns the current icon id for an
   // option; `onSetIcon` sets/clears it.
@@ -45,6 +50,9 @@ export default function BudgetDropdown({
   const [draft, setDraft] = useState("");
   const [editingOpt, setEditingOpt] = useState<string | null>(null);
   const [editOptDraft, setEditOptDraft] = useState("");
+  // When true, each option reveals its rename/delete controls. Off by default so
+  // the list stays clean; toggled with the three-dots "manage" button.
+  const [managing, setManaging] = useState(false);
   const [rect, setRect] = useState<DOMRect | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -59,6 +67,7 @@ export default function BudgetDropdown({
     setOpen(false);
     setAdding(false);
     setEditingOpt(null);
+    setManaging(false);
   }
 
   useEffect(() => {
@@ -156,13 +165,50 @@ export default function BudgetDropdown({
             }}
             className="z-60 max-h-64 overflow-auto rounded-2xl border border-amber-900/15 bg-white p-1.5 shadow-xl shadow-amber-900/10"
           >
+            {(onRename || onDelete) && options.length > 0 && (
+              <div className="flex items-center justify-end px-1 pb-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setManaging((m) => !m);
+                    setEditingOpt(null);
+                  }}
+                  aria-label={managing ? "Done editing options" : "Edit options"}
+                  aria-pressed={managing}
+                  title={managing ? "Done" : "Edit options"}
+                  className={`flex h-7 w-7 items-center justify-center rounded-lg transition-colors ${
+                    managing
+                      ? "bg-amber-900/10 text-amber-900"
+                      : "text-amber-900/50 hover:bg-amber-900/5 hover:text-amber-900"
+                  }`}
+                >
+                  <svg
+                    width={16}
+                    height={16}
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
+                    <circle cx="12" cy="5" r="1.7" />
+                    <circle cx="12" cy="12" r="1.7" />
+                    <circle cx="12" cy="19" r="1.7" />
+                  </svg>
+                </button>
+              </div>
+            )}
             {options.length === 0 && !onAddNew && (
               <p className="px-3 py-2 text-sm text-amber-900/40">No options</p>
             )}
             {options.map((opt) => {
-              const canModify =
-                Boolean(onRename || onDelete) &&
-                (isEditable ? isEditable(opt) : true);
+              const canRename =
+                Boolean(onRename) && (isEditable ? isEditable(opt) : true);
+              const canDelete =
+                Boolean(onDelete) &&
+                (isDeletable
+                  ? isDeletable(opt)
+                  : isEditable
+                    ? isEditable(opt)
+                    : true);
               if (editingOpt === opt) {
                 return (
                   <div key={opt} className="p-1">
@@ -296,7 +342,7 @@ export default function BudgetDropdown({
                       </svg>
                     )}
                   </button>
-                  {canModify && onRename && (
+                  {managing && canRename && onRename && (
                     <button
                       type="button"
                       onClick={() => {
@@ -322,7 +368,7 @@ export default function BudgetDropdown({
                       </svg>
                     </button>
                   )}
-                  {canModify && onDelete && (
+                  {managing && canDelete && onDelete && (
                     <button
                       type="button"
                       onClick={() => {
