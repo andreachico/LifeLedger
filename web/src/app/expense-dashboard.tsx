@@ -908,7 +908,6 @@ function AddExpenseModal({
                 onAddNew={onAddCategory}
                 onRename={onRenameCategory}
                 onDelete={onDeleteCategory}
-                iconFor={(c) => categoryIcons[c] ?? ""}
                 onSetIcon={onSetCategoryIcon}
                 placeholder="Select a category"
                 addLabel="Add new category…"

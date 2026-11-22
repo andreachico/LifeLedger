@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   createInvestmentHolding,
   createInvestmentSale,
+  deleteBudgetEntry,
   deleteInvestmentHolding,
   deleteInvestmentSale,
   getBudgetBreakdown,
@@ -150,24 +151,27 @@ export default function InvestmentsPage() {
     }
   }
 
-  // Delete a user-added holding from the catalog along with any sells recorded.
+  // Delete a holding everywhere: its catalog entry (if any), its planned budget
+  // buys across all months, and any recorded sells. This lets the user remove any
+  // dropdown choice, including ones that only came from the budget.
   async function deleteHolding(label: string) {
-    const affected = sales.filter(
-      (s) => s.name.toLowerCase() === label.toLowerCase(),
+    const lower = label.toLowerCase();
+    const affected = sales.filter((s) => s.name.toLowerCase() === lower);
+    const keys = Object.keys(breakdown).filter(
+      (k) =>
+        k.startsWith("investments:") && keyToLabel(k).toLowerCase() === lower,
     );
     try {
-      await deleteInvestmentHolding(label);
+      if (holdings.some((h) => h.toLowerCase() === lower)) {
+        await deleteInvestmentHolding(label);
+      }
       for (const s of affected) await deleteInvestmentSale(s.id);
-      setSales((prev) =>
-        prev.filter((s) => s.name.toLowerCase() !== label.toLowerCase()),
-      );
-      setHoldings((prev) =>
-        prev.filter((h) => h.toLowerCase() !== label.toLowerCase()),
-      );
-      if (name.toLowerCase() === label.toLowerCase()) setName("");
-      setError(null);
+      for (const k of keys) await deleteBudgetEntry(k);
+      if (name.toLowerCase() === lower) setName("");
+      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "failed to delete holding");
+      await load();
     }
   }
 
@@ -279,6 +283,7 @@ export default function InvestmentsPage() {
             onRename={renameHolding}
             onDelete={(label) => setPendingDelete(label)}
             isEditable={(label) => userHoldingSet.has(label.toLowerCase())}
+            isDeletable={() => true}
             placeholder="Select holding…"
             addLabel="Add investment…"
             ariaLabel="Holding to sell"
@@ -414,7 +419,7 @@ export default function InvestmentsPage() {
       <ConfirmDialog
         open={pendingDelete !== null}
         title="Delete investment"
-        message={`Delete “${pendingDelete}” and any sells recorded for it? This cannot be undone.`}
+        message={`Delete “${pendingDelete}”, its planned budget buys, and any sells recorded for it? This cannot be undone.`}
         confirmLabel="Delete"
         onCancel={() => setPendingDelete(null)}
         onConfirm={() => {

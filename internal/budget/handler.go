@@ -37,6 +37,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /budget", h.get)
 	mux.HandleFunc("GET /budget/breakdown", h.breakdown)
 	mux.HandleFunc("PUT /budget", h.save)
+	mux.HandleFunc("DELETE /budget/entry", h.deleteEntry)
 
 	// Personalized Type/Category dropdown options, independent of month.
 	mux.HandleFunc("GET /budget/type-options", h.getTypeOptions)
@@ -74,6 +75,22 @@ func (h *Handler) save(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, plan)
+}
+
+// deleteEntry removes a single entry key (e.g. "savings:travel") from every one
+// of the caller's months. Used when deleting a savings fund or investment
+// holding so it disappears from all budget data, not just the catalog.
+func (h *Handler) deleteEntry(w http.ResponseWriter, r *http.Request) {
+	key := r.URL.Query().Get("key")
+	if key == "" {
+		writeError(w, http.StatusBadRequest, "missing key")
+		return
+	}
+	if err := h.store.DeleteEntry(r.Context(), key); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // getTypeOptions returns the caller's personalized Type/Category options.

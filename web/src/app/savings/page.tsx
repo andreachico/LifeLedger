@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   createSaving,
   createSavingsFund,
+  deleteBudgetEntry,
   deleteSaving,
   deleteSavingsFund,
   getBudgetBreakdown,
@@ -148,24 +149,26 @@ export default function SavingsPage() {
     }
   }
 
-  // Delete a user-added fund from the catalog along with any withdrawals.
+  // Delete a fund everywhere: its catalog entry (if any), its planned budget
+  // deposits across all months, and any recorded withdrawals. This lets the user
+  // remove any dropdown choice, including ones that only came from the budget.
   async function deleteFund(label: string) {
-    const affected = withdrawals.filter(
-      (s) => s.name.toLowerCase() === label.toLowerCase(),
+    const lower = label.toLowerCase();
+    const affected = withdrawals.filter((s) => s.name.toLowerCase() === lower);
+    const keys = Object.keys(breakdown).filter(
+      (k) => k.startsWith("savings:") && keyToLabel(k).toLowerCase() === lower,
     );
     try {
-      await deleteSavingsFund(label);
+      if (funds.some((f) => f.toLowerCase() === lower)) {
+        await deleteSavingsFund(label);
+      }
       for (const s of affected) await deleteSaving(s.id);
-      setWithdrawals((prev) =>
-        prev.filter((s) => s.name.toLowerCase() !== label.toLowerCase()),
-      );
-      setFunds((prev) =>
-        prev.filter((f) => f.toLowerCase() !== label.toLowerCase()),
-      );
-      if (name.toLowerCase() === label.toLowerCase()) setName("");
-      setError(null);
+      for (const k of keys) await deleteBudgetEntry(k);
+      if (name.toLowerCase() === lower) setName("");
+      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "failed to delete fund");
+      await load();
     }
   }
 
@@ -283,6 +286,7 @@ export default function SavingsPage() {
             onRename={renameFund}
             onDelete={(label) => setPendingDelete(label)}
             isEditable={(label) => userFundSet.has(label.toLowerCase())}
+            isDeletable={() => true}
             placeholder="Select fund…"
             addLabel="Add fund…"
             ariaLabel="Fund to withdraw from"
@@ -421,7 +425,7 @@ export default function SavingsPage() {
       <ConfirmDialog
         open={pendingDelete !== null}
         title="Delete fund"
-        message={`Delete “${pendingDelete}” and any withdrawals recorded for it? This cannot be undone.`}
+        message={`Delete “${pendingDelete}”, its planned budget deposits, and any withdrawals recorded for it? This cannot be undone.`}
         confirmLabel="Delete"
         onCancel={() => setPendingDelete(null)}
         onConfirm={() => {

@@ -82,6 +82,16 @@ export async function getBudgetPlan(month: string): Promise<BudgetPlan> {
   );
 }
 
+// deleteBudgetEntry removes an entry key (e.g. "savings:travel") from every
+// month, so a savings fund or investment holding disappears from all budget
+// data at once — not just the catalog.
+export async function deleteBudgetEntry(key: string): Promise<void> {
+  const res = await fetch(`/api/budget/entry?key=${encodeURIComponent(key)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`delete failed (${res.status})`);
+}
+
 // --- Budget type/category options ---
 //
 // The personalized Type/Category dropdown choices for the budget tables, keyed
