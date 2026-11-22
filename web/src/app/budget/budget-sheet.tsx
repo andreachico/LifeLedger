@@ -7,6 +7,8 @@ import type { BudgetPlan, Expense } from "@/lib/types";
 import {
   getBudgetTypeOptions,
   getIncome,
+  getInvestmentHoldings,
+  getSavingsFunds,
   saveBudgetPlan,
   saveBudgetTypeOptions,
   type BudgetTypeOption,
@@ -664,6 +666,27 @@ export default function BudgetSheet({
     });
   }, [typeOptions, typeOptionsLoaded]);
 
+  // Backend fund/holding catalogs managed on the Savings and Investments tabs.
+  // The Savings and Investments sections here offer these same names in their
+  // Type dropdown, so the dashboard choices match what those tabs show.
+  const [savingsFunds, setSavingsFunds] = useState<string[]>([]);
+  const [investmentHoldings, setInvestmentHoldings] = useState<string[]>([]);
+  useEffect(() => {
+    let active = true;
+    Promise.all([getSavingsFunds(), getInvestmentHoldings()])
+      .then(([funds, holdings]) => {
+        if (!active) return;
+        setSavingsFunds(funds);
+        setInvestmentHoldings(holdings);
+      })
+      .catch(() => {
+        // Ignore load failures; dropdowns still work from used types.
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   function addTypeOption(sectionId: string, value: string) {
     const t = value.trim();
     if (!t) return;
@@ -782,7 +805,15 @@ export default function BudgetSheet({
     for (const r of customRows[sectionId] ?? []) {
       if (r.type) used.push(r.type);
     }
-    return Array.from(new Set([...added, ...used])).sort((a, b) =>
+    // Savings and Investments mirror the fund/holding catalog from their tabs so
+    // the dropdown choices stay consistent across the app.
+    const catalog =
+      sectionId === "savings"
+        ? savingsFunds
+        : sectionId === "investments"
+          ? investmentHoldings
+          : [];
+    return Array.from(new Set([...added, ...used, ...catalog])).sort((a, b) =>
       a.localeCompare(b),
     );
   }
