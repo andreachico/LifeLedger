@@ -13,8 +13,10 @@ import {
   getExpenses,
   getHabits,
   getIncome,
+  getInvestmentHoldings,
   getInvestmentSales,
   getSavings,
+  getSavingsFunds,
 } from "@/lib/server-api";
 import { remainingBalance } from "../debts/schedule";
 
@@ -63,19 +65,31 @@ function sectionTitle(id: string): string {
     || "Other";
 }
 
-// The savings funds and investment holdings, mapped to their budget keys — kept
-// in sync with the Savings and Investments pages.
-const FUNDS = [
-  { key: "savings:emergency", label: "Emergency Fund" },
-  { key: "savings:travel", label: "Travel Fund" },
-  { key: "savings:ph", label: "PH Fund" },
-] as const;
+// Friendly labels for funds/holdings that used to ship as built-ins, so a
+// returning account's budget rows keep a readable name. Kept in sync with the
+// Savings and Investments tabs.
+const SAVINGS_LEGACY_LABELS: Record<string, string> = {
+  emergency: "Emergency Fund",
+  travel: "Travel Fund",
+  ph: "PH Fund",
+};
+const INVESTMENT_LEGACY_LABELS: Record<string, string> = {
+  ethereum: "Ethereum",
+  sp500: "S&P 500",
+  xrp: "XRP",
+};
 
-const ASSETS = [
-  { key: "investments:ethereum", label: "Ethereum" },
-  { key: "investments:sp500", label: "S&P 500" },
-  { key: "investments:xrp", label: "XRP" },
-] as const;
+// Turn a budget "<section>:<id>" entry key into a display label, matching the
+// tabs' keyToLabel helpers.
+function keyToLabel(
+  entryKey: string,
+  legacy: Record<string, string>,
+): string {
+  const id = entryKey.slice(entryKey.indexOf(":") + 1);
+  if (legacy[id]) return legacy[id];
+  const spaced = id.replace(/[-_]/g, " ");
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
 
 // Sum every month of a breakdown row (all-time deposits/buys for a key).
 function sumAllMonths(row: Record<string, number> | undefined): number {
@@ -83,23 +97,71 @@ function sumAllMonths(row: Record<string, number> | undefined): number {
   return Object.values(row).reduce((a, b) => a + b, 0);
 }
 
+// Build a fund/holding balance list the same way the Savings and Investments
+// tabs build their dropdowns: the user's catalog, plus any name that already has
+// budget rows or recorded transactions, so the Overview matches those tabs.
+function buildBalances(
+  prefix: "savings" | "investments",
+  legacy: Record<string, string>,
+  catalog: string[],
+  breakdown: Record<string, Record<string, number>>,
+  transactions: { name: string; amount: number }[],
+): { label: string; balance: number }[] {
+  const keys = Object.keys(breakdown).filter((k) =>
+    k.startsWith(`${prefix}:`),
+  );
+  const labels: string[] = [];
+  const seen = new Set<string>();
+  const push = (label: string) => {
+    const lower = label.toLowerCase();
+    if (seen.has(lower)) return;
+    seen.add(lower);
+    labels.push(label);
+  };
+  catalog.forEach(push);
+  keys.forEach((k) => push(keyToLabel(k, legacy)));
+  transactions.forEach((t) => push(t.name));
+
+  return labels.map((label) => {
+    const lower = label.toLowerCase();
+    const planned = keys
+      .filter((k) => keyToLabel(k, legacy).toLowerCase() === lower)
+      .reduce((sum, k) => sum + sumAllMonths(breakdown[k]), 0);
+    const spent = transactions
+      .filter((t) => t.name.toLowerCase() === lower)
+      .reduce((sum, t) => sum + t.amount, 0);
+    return { label, balance: planned - spent };
+  });
+}
+
 export default async function OverviewPage() {
   const month = currentMonth();
 
   // Load everything in parallel. If any one section's API is unreachable we
   // degrade gracefully to empty data rather than failing the whole page.
-  const [income, expenses, breakdown, savings, sales, debts, habits] =
-    await Promise.all([
-      getIncome(month).catch(() => [] as Income[]),
-      getExpenses().catch(() => [] as Expense[]),
-      getBudgetBreakdown().catch(
-        () => ({}) as Record<string, Record<string, number>>,
-      ),
-      getSavings().catch(() => [] as Saving[]),
-      getInvestmentSales().catch(() => [] as InvestmentSale[]),
-      getDebts().catch(() => [] as Debt[]),
-      getHabits().catch(() => [] as Habit[]),
-    ]);
+  const [
+    income,
+    expenses,
+    breakdown,
+    savings,
+    sales,
+    debts,
+    habits,
+    savingsFunds,
+    investmentHoldings,
+  ] = await Promise.all([
+    getIncome(month).catch(() => [] as Income[]),
+    getExpenses().catch(() => [] as Expense[]),
+    getBudgetBreakdown().catch(
+      () => ({}) as Record<string, Record<string, number>>,
+    ),
+    getSavings().catch(() => [] as Saving[]),
+    getInvestmentSales().catch(() => [] as InvestmentSale[]),
+    getDebts().catch(() => [] as Debt[]),
+    getHabits().catch(() => [] as Habit[]),
+    getSavingsFunds().catch(() => [] as string[]),
+    getInvestmentHoldings().catch(() => [] as string[]),
+  ]);
 
   // --- Income & spending (this month) ---
   const totalIncome = income.reduce((s, i) => s + i.amount, 0);
@@ -134,22 +196,22 @@ export default async function OverviewPage() {
   const allocationMax = allocations.reduce((m, a) => Math.max(m, a.amount), 0);
 
   // --- Savings & investment balances (all-time) ---
-  const fundBalances = FUNDS.map((f) => {
-    const deposits = sumAllMonths(breakdown[f.key]);
-    const withdrawn = savings
-      .filter((s) => s.name === f.label)
-      .reduce((s, w) => s + w.amount, 0);
-    return { label: f.label, balance: deposits - withdrawn };
-  });
+  const fundBalances = buildBalances(
+    "savings",
+    SAVINGS_LEGACY_LABELS,
+    savingsFunds,
+    breakdown,
+    savings,
+  );
   const totalSaved = fundBalances.reduce((s, f) => s + f.balance, 0);
 
-  const assetBalances = ASSETS.map((a) => {
-    const bought = sumAllMonths(breakdown[a.key]);
-    const sold = sales
-      .filter((s) => s.name === a.label)
-      .reduce((s, x) => s + x.amount, 0);
-    return { label: a.label, balance: bought - sold };
-  });
+  const assetBalances = buildBalances(
+    "investments",
+    INVESTMENT_LEGACY_LABELS,
+    investmentHoldings,
+    breakdown,
+    sales,
+  );
   const totalInvested = assetBalances.reduce((s, a) => s + a.balance, 0);
 
   // --- Debts ---
@@ -456,6 +518,9 @@ function BalanceList({
   items: { label: string; balance: number }[];
   accent: string;
 }) {
+  if (items.length === 0) {
+    return <Empty>Nothing here yet.</Empty>;
+  }
   return (
     <ul className="flex flex-col divide-y divide-amber-900/10">
       {items.map((it) => (

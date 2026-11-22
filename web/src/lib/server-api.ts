@@ -136,3 +136,31 @@ export async function getBudgetBreakdown(): Promise<
   }
   return res.json() as Promise<Record<string, Record<string, number>>>;
 }
+
+// getSavingsFunds loads the user's savings fund catalog (names only), the same
+// list shown in the Savings tab's dropdown.
+export async function getSavingsFunds(): Promise<string[]> {
+  const res = await fetch(`${BACKEND_URL}/savings/funds`, {
+    cache: "no-store",
+    headers: await authHeaders(),
+  });
+  if (res.status === 401) redirect("/login");
+  if (!res.ok) {
+    throw new Error(`failed to load savings funds (${res.status})`);
+  }
+  return res.json() as Promise<string[]>;
+}
+
+// getInvestmentHoldings loads the user's investment holding catalog (names
+// only), the same list shown in the Investments tab's dropdown.
+export async function getInvestmentHoldings(): Promise<string[]> {
+  const res = await fetch(`${BACKEND_URL}/investments/holdings`, {
+    cache: "no-store",
+    headers: await authHeaders(),
+  });
+  if (res.status === 401) redirect("/login");
+  if (!res.ok) {
+    throw new Error(`failed to load investment holdings (${res.status})`);
+  }
+  return res.json() as Promise<string[]>;
+}
