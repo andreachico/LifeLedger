@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "FinTracker",
+  title: "LifeLedger",
   description: "A simple expense tracker UI backed by a Go + PostgreSQL API.",
 };
 

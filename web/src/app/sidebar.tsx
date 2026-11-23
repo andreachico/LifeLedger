@@ -156,7 +156,7 @@ export default function Sidebar() {
           </svg>
         </span>
         <span className="text-base font-semibold text-amber-900">
-          FinTracker
+          LifeLedger
         </span>
       </div>
       <div className="px-3 pb-2 pt-1 text-xs font-semibold uppercase tracking-wider text-amber-900/50">
