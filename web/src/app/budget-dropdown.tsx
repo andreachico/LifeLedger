@@ -373,6 +373,7 @@ export default function BudgetDropdown({
                       type="button"
                       onClick={() => {
                         closeMenu();
+                        if (value === opt) onChange("");
                         onDelete(opt);
                       }}
                       aria-label={`Delete ${opt}`}
