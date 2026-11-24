@@ -8,6 +8,21 @@ import { useEffect, useRef, useState } from "react";
 
 const WEEKDAYS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
 const fieldClass =
   "w-full rounded-xl border border-amber-900/15 bg-amber-50/40 px-3.5 py-2.5 text-sm text-zinc-900 shadow-sm transition-colors placeholder:text-amber-900/30 focus:border-amber-600 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-600/20";
 
@@ -58,11 +73,15 @@ export default function DatePicker({
   min,
   onChange,
   placeholder = "Select date",
+  monthOnly = false,
 }: {
   value: string;
   min?: string;
   onChange: (iso: string) => void;
   placeholder?: string;
+  // When true the picker selects a whole month: value/onChange use "YYYY-MM"
+  // and the popover shows a month grid instead of days.
+  monthOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState(() =>
@@ -107,16 +126,22 @@ export default function DatePicker({
   const todayIso = new Date().toISOString().slice(0, 10);
 
   const display = value
-    ? new Date(`${value}T00:00:00`).toLocaleDateString("en-GB", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      })
+    ? monthOnly
+      ? monthLabel(value, { month: "long", year: "numeric" })
+      : new Date(`${value}T00:00:00`).toLocaleDateString("en-GB", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+        })
     : "";
 
   function shiftMonth(delta: number) {
     const d = new Date(vy, vm - 1 + delta, 1);
     setView(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  }
+
+  function shiftYear(delta: number) {
+    setView(`${vy + delta}-${String(vm).padStart(2, "0")}`);
   }
 
   return (
@@ -136,65 +161,122 @@ export default function DatePicker({
 
       {open && (
         <div className="absolute left-0 z-20 mt-2 w-72 rounded-2xl border border-amber-900/15 bg-white p-4 shadow-xl shadow-amber-900/10">
-          <div className="mb-3 flex items-center justify-between">
-            <button
-              type="button"
-              onClick={() => shiftMonth(-1)}
-              aria-label="Previous month"
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-amber-900/70 transition-colors hover:bg-amber-900/5"
-            >
-              <Chevron dir="left" />
-            </button>
-            <span className="text-sm font-semibold text-amber-900">
-              {monthLabel(view, { month: "long", year: "numeric" })}
-            </span>
-            <button
-              type="button"
-              onClick={() => shiftMonth(1)}
-              aria-label="Next month"
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-amber-900/70 transition-colors hover:bg-amber-900/5"
-            >
-              <Chevron dir="right" />
-            </button>
-          </div>
-
-          <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold uppercase tracking-wide text-amber-900/40">
-            {WEEKDAYS.map((d) => (
-              <div key={d} className="py-1">
-                {d}
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-1 grid grid-cols-7 gap-1">
-            {cells.map((d, i) => {
-              if (d === null) return <div key={`e${i}`} />;
-              const iso = isoFor(d);
-              const selected = value === iso;
-              const isToday = iso === todayIso;
-              const disabled = min ? iso < min : false;
-              return (
+          {monthOnly ? (
+            <>
+              <div className="mb-3 flex items-center justify-between">
                 <button
-                  key={iso}
                   type="button"
-                  disabled={disabled}
-                  onClick={() => {
-                    onChange(iso);
-                    setOpen(false);
-                  }}
-                  className={`flex h-9 items-center justify-center rounded-lg text-sm transition-colors ${
-                    selected
-                      ? "bg-linear-to-br from-amber-800 to-amber-600 font-semibold text-amber-50 shadow-sm shadow-amber-900/20"
-                      : isToday
-                        ? "font-semibold text-amber-900 ring-1 ring-inset ring-amber-600/40 hover:bg-amber-900/5"
-                        : "text-zinc-700 hover:bg-amber-900/5"
-                  } disabled:cursor-not-allowed disabled:text-amber-900/20 disabled:hover:bg-transparent`}
+                  onClick={() => shiftYear(-1)}
+                  aria-label="Previous year"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-amber-900/70 transition-colors hover:bg-amber-900/5"
                 >
-                  {d}
+                  <Chevron dir="left" />
                 </button>
-              );
-            })}
-          </div>
+                <span className="text-sm font-semibold text-amber-900">
+                  {vy}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => shiftYear(1)}
+                  aria-label="Next year"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-amber-900/70 transition-colors hover:bg-amber-900/5"
+                >
+                  <Chevron dir="right" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-3 gap-1.5">
+                {MONTHS.map((label, i) => {
+                  const key = `${vy}-${String(i + 1).padStart(2, "0")}`;
+                  const selected = value === key;
+                  const isCurrent = key === currentMonth();
+                  const disabled = min ? key < min : false;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => {
+                        onChange(key);
+                        setOpen(false);
+                      }}
+                      className={`flex h-9 items-center justify-center rounded-lg text-sm transition-colors ${
+                        selected
+                          ? "bg-linear-to-br from-amber-800 to-amber-600 font-semibold text-amber-50 shadow-sm shadow-amber-900/20"
+                          : isCurrent
+                            ? "font-semibold text-amber-900 ring-1 ring-inset ring-amber-600/40 hover:bg-amber-900/5"
+                            : "text-zinc-700 hover:bg-amber-900/5"
+                      } disabled:cursor-not-allowed disabled:text-amber-900/20 disabled:hover:bg-transparent`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="mb-3 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => shiftMonth(-1)}
+                  aria-label="Previous month"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-amber-900/70 transition-colors hover:bg-amber-900/5"
+                >
+                  <Chevron dir="left" />
+                </button>
+                <span className="text-sm font-semibold text-amber-900">
+                  {monthLabel(view, { month: "long", year: "numeric" })}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => shiftMonth(1)}
+                  aria-label="Next month"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-amber-900/70 transition-colors hover:bg-amber-900/5"
+                >
+                  <Chevron dir="right" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold uppercase tracking-wide text-amber-900/40">
+                {WEEKDAYS.map((d) => (
+                  <div key={d} className="py-1">
+                    {d}
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-1 grid grid-cols-7 gap-1">
+                {cells.map((d, i) => {
+                  if (d === null) return <div key={`e${i}`} />;
+                  const iso = isoFor(d);
+                  const selected = value === iso;
+                  const isToday = iso === todayIso;
+                  const disabled = min ? iso < min : false;
+                  return (
+                    <button
+                      key={iso}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => {
+                        onChange(iso);
+                        setOpen(false);
+                      }}
+                      className={`flex h-9 items-center justify-center rounded-lg text-sm transition-colors ${
+                        selected
+                          ? "bg-linear-to-br from-amber-800 to-amber-600 font-semibold text-amber-50 shadow-sm shadow-amber-900/20"
+                          : isToday
+                            ? "font-semibold text-amber-900 ring-1 ring-inset ring-amber-600/40 hover:bg-amber-900/5"
+                            : "text-zinc-700 hover:bg-amber-900/5"
+                      } disabled:cursor-not-allowed disabled:text-amber-900/20 disabled:hover:bg-transparent`}
+                    >
+                      {d}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
 
           {value && (
             <button

@@ -10,6 +10,7 @@ import {
 } from "@/lib/api";
 import SpendingCharts from "./spending-charts";
 import BudgetDropdown from "./budget-dropdown";
+import DatePicker from "./date-picker";
 import { CATEGORY_ICONS, CategoryGlyph, iconColor } from "./category-icons";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -54,6 +55,14 @@ const CATEGORY_COLORS: Record<string, string> = {
 
 const categoryColor = (category: string) =>
   CATEGORY_COLORS[category] ?? "bg-zinc-100 text-zinc-700";
+
+// The category badge mirrors the icon tile's color: when a preset icon is
+// chosen for the category, reuse that icon's background/text classes; otherwise
+// fall back to the per-category badge color.
+const categoryBadgeColor = (category: string, iconId?: string) =>
+  iconId && CATEGORY_ICONS.some((i) => i.id === iconId)
+    ? iconColor(iconId)
+    : categoryColor(category);
 
 // The form holds strings because <input> values are strings; we convert amount
 // to a number when submitting.
@@ -576,8 +585,9 @@ export default function ExpenseDashboard({
               </span>
               <span className="w-36 shrink-0">
                 <span
-                  className={`rounded-md px-2 py-0.5 text-xs font-medium ${categoryColor(
+                  className={`rounded-md px-2 py-0.5 text-xs font-medium ${categoryBadgeColor(
                     e.category,
+                    categoryIcons[e.category],
                   )}`}
                 >
                   {e.category}
@@ -775,16 +785,13 @@ function AddExpenseModal({
               />
             </label>
 
-            <label className="flex flex-col gap-1.5 sm:col-span-2">
+            <div className="flex flex-col gap-1.5 sm:col-span-2">
               <span className="text-sm font-medium text-zinc-900">Date</span>
-              <input
-                type="date"
-                required
+              <DatePicker
                 value={form.date}
-                onChange={(e) => onChange({ date: e.target.value })}
-                className={fieldClass}
+                onChange={(iso) => onChange({ date: iso })}
               />
-            </label>
+            </div>
           </div>
 
           <button

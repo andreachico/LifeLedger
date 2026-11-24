@@ -13,11 +13,12 @@ import {
   deleteSaving,
   deleteSavingsFund,
   getBudgetBreakdown,
+  getBudgetPlan,
   getSavings,
   getSavingsFunds,
   renameSavingsFund,
 } from "@/lib/api";
-import type { Saving } from "@/lib/types";
+import type { BudgetPlan, Saving } from "@/lib/types";
 import BudgetDropdown from "../budget-dropdown";
 import ConfirmDialog from "../confirm-dialog";
 import DatePicker from "../date-picker";
@@ -66,6 +67,9 @@ export default function SavingsPage() {
   const [breakdown, setBreakdown] = useState<
     Record<string, Record<string, number>>
   >({});
+  // Current month's budget plan, used to read each sinking-fund row's type and
+  // label so Travel-typed rows can be matched to a Savings table by name.
+  const [plan, setPlan] = useState<BudgetPlan>({});
   const [withdrawals, setWithdrawals] = useState<Saving[]>([]);
   const [funds, setFunds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -79,14 +83,16 @@ export default function SavingsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [b, s, f] = await Promise.all([
+      const [b, s, f, p] = await Promise.all([
         getBudgetBreakdown(),
         getSavings(),
         getSavingsFunds(),
+        getBudgetPlan(currentDate().slice(0, 7)),
       ]);
       setBreakdown(b);
       setWithdrawals(s);
       setFunds(f);
+      setPlan(p);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "failed to load savings");
@@ -155,9 +161,12 @@ export default function SavingsPage() {
   async function deleteFund(label: string) {
     const lower = label.toLowerCase();
     const affected = withdrawals.filter((s) => s.name.toLowerCase() === lower);
-    const keys = Object.keys(breakdown).filter(
-      (k) => k.startsWith("savings:") && keyToLabel(k).toLowerCase() === lower,
-    );
+    const keys = Object.keys(breakdown).filter((k) => {
+      if (!k.startsWith("savings:")) return false;
+      const t = plan[k]?.type?.trim();
+      const fundLabel = t ? t : keyToLabel(k);
+      return fundLabel.toLowerCase() === lower;
+    });
     try {
       if (funds.some((f) => f.toLowerCase() === lower)) {
         await deleteSavingsFund(label);
@@ -212,6 +221,14 @@ export default function SavingsPage() {
   const depositKeys = Object.keys(breakdown).filter((k) =>
     k.startsWith("savings:"),
   );
+  // The fund a budget "savings:" row belongs to. The fund name is chosen from
+  // the row's Type dropdown (which mirrors the Savings tab's fund catalog), so a
+  // row's deposits accrue to that fund. Rows that predate this (meaningful key,
+  // no type) fall back to the label derived from the key.
+  const fundOfKey = (k: string): string => {
+    const t = plan[k]?.type?.trim();
+    return t ? t : keyToLabel(k);
+  };
   const fundLabels: string[] = [];
   const seen = new Set<string>();
   const pushLabel = (label: string) => {
@@ -221,7 +238,7 @@ export default function SavingsPage() {
     fundLabels.push(label);
   };
   funds.forEach(pushLabel);
-  depositKeys.forEach((k) => pushLabel(keyToLabel(k)));
+  depositKeys.forEach((k) => pushLabel(fundOfKey(k)));
   withdrawals.forEach((s) => pushLabel(s.name));
 
   // Build each fund's rows (budget deposits + recorded withdrawals) and net total.
@@ -229,7 +246,7 @@ export default function SavingsPage() {
   const fundData = fundLabels.map((label) => {
     const lower = label.toLowerCase();
     const deposits: Row[] = depositKeys
-      .filter((k) => keyToLabel(k).toLowerCase() === lower)
+      .filter((k) => fundOfKey(k).toLowerCase() === lower)
       .flatMap((k) => Object.entries(breakdown[k] ?? {}))
       .filter(([, amt]) => amt !== 0)
       .map(([m, amt]) => ({ month: m, amount: amt, kind: "deposit" as const }));

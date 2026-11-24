@@ -365,13 +365,14 @@ const FIXKOSTEN: Row[] = [];
 const SECTIONS: Section[] = [
   { id: "fix", title: "Fixkosten", showDue: true, rows: FIXKOSTEN },
   { id: "others", title: "Others", showDue: false, rows: [] },
+  { id: "savings", title: "Savings", showDue: false, rows: [] },
 ];
 
 // The built-in tables every user starts with. Fixkosten and Others live in
 // SECTIONS above; Variable Kosten is rendered separately but is also a default.
 // These three are the only non-removable tables; any other section is a
 // user-created table saved to the backend.
-const DEFAULT_SECTION_IDS = new Set(["fix", "others"]);
+const DEFAULT_SECTION_IDS = new Set(["fix", "others", "savings"]);
 
 // Variable Kosten has its own Soll / Ist layout, kept separate from the
 // Type / Category / Budget sections above.
