@@ -14,11 +14,15 @@ export default function Chrome({ children }: { children: React.ReactNode }) {
     return <>{children}</>;
   }
 
+  // The dashboard is a full-bleed, self-titled view (its own date + greeting
+  // header), so it skips the breadcrumb top bar that the other routes show.
+  const showTopBar = pathname !== "/overview";
+
   return (
     <>
       <Sidebar />
       <div className="flex flex-1 flex-col">
-        <TopBar />
+        {showTopBar && <TopBar />}
         {children}
       </div>
     </>
