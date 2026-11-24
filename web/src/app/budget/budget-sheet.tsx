@@ -423,6 +423,9 @@ function extractTables(plan: BudgetPlan): CustomTable[] {
   for (const key of Object.keys(plan)) {
     if (!key.startsWith("table:")) continue;
     const id = key.slice("table:".length);
+    // A legacy "table:<id>" marker for what is now a reserved default section
+    // (e.g. "savings") must not resurface as a duplicate user table.
+    if (RESERVED_SECTION_IDS.has(id)) continue;
     const entry = plan[key];
     seen.add(id);
     tables.push({
@@ -1216,7 +1219,9 @@ export default function BudgetSheet({
       ...base,
       title: o.title,
       showDue: o.showDue,
-      showType: o.showType,
+      // Savings rows link to funds via their Type, so the column is mandatory
+      // and a stale "type off" override must never hide it.
+      showType: base.id === "savings" ? true : o.showType,
     };
   }
 
@@ -1253,7 +1258,9 @@ export default function BudgetSheet({
         title: o?.title ?? s.title,
         amountLabel: "Budget (€)",
         showDue: o?.showDue ?? s.showDue,
-        showType: o ? o.showType : s.showType !== false,
+        // Savings always keeps its Type column (rows link to funds by Type).
+        showType:
+          sectionId === "savings" ? true : o ? o.showType : s.showType !== false,
       };
     }
     const t = customTables.find((x) => x.id === sectionId);
