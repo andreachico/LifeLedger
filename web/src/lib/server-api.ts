@@ -8,6 +8,7 @@ import type {
   Income,
   InvestmentSale,
   Saving,
+  User,
 } from "./types";
 
 // Server-side data loading. Unlike the browser client (which uses the "/api"
@@ -163,4 +164,29 @@ export async function getInvestmentHoldings(): Promise<string[]> {
     throw new Error(`failed to load investment holdings (${res.status})`);
   }
   return res.json() as Promise<string[]>;
+}
+
+// getMe returns the signed-in account, or null if the session is missing. Used
+// by the dashboard to greet the user by name. Unlike the list loaders it never
+// redirects, so a logged-out visitor just gets a neutral greeting.
+export async function getMe(): Promise<User | null> {
+  const res = await fetch(`${BACKEND_URL}/auth/me`, {
+    cache: "no-store",
+    headers: await authHeaders(),
+  });
+  if (!res.ok) return null;
+  return res.json() as Promise<User>;
+}
+
+// getUserDoc loads a generic per-user JSON document by key (e.g. "year-events"
+// or "travel-destinations"), the same documents the client writes via the
+// userdoc API. Returns null when nothing is saved so callers degrade to empty.
+export async function getUserDoc<T>(key: string): Promise<T | null> {
+  const res = await fetch(
+    `${BACKEND_URL}/userdoc/${encodeURIComponent(key)}`,
+    { cache: "no-store", headers: await authHeaders() },
+  );
+  if (res.status === 401) redirect("/login");
+  if (!res.ok) return null;
+  return res.json() as Promise<T | null>;
 }
