@@ -14,6 +14,7 @@ import {
 } from "@/lib/api";
 import type { Debt, NewDebt } from "@/lib/types";
 import { monthLabel, remainingBalance } from "./schedule";
+import DatePicker from "../date-picker";
 
 const currency = new Intl.NumberFormat("en-IE", {
   style: "currency",
@@ -260,12 +261,12 @@ export default function DebtsPage() {
               <span className="text-sm font-medium text-zinc-700">
                 Due month
               </span>
-              <input
-                type="month"
+              <DatePicker
+                monthOnly
                 value={oneMonth}
-                onChange={(e) => setOneMonth(e.target.value)}
-                required
-                className="rounded-lg border border-amber-900/20 px-3 py-2 text-sm text-zinc-900 focus:border-amber-700 focus:outline-none"
+                onChange={setOneMonth}
+                min={monthKey(new Date())}
+                placeholder="Select month"
               />
             </label>
             <div className="flex items-end sm:col-span-2">
@@ -400,9 +401,9 @@ export default function DebtsPage() {
 
           <form
             onSubmit={handleAddInstallment}
-            className="grid grid-cols-1 gap-3 rounded-xl border border-amber-900/20 bg-white p-6 shadow-sm sm:grid-cols-2 lg:grid-cols-4"
+            className="grid grid-cols-1 gap-3 rounded-xl border border-amber-900/20 bg-white p-6 shadow-sm sm:grid-cols-2"
           >
-            <label className="flex flex-col gap-1.5 sm:col-span-2 lg:col-span-4">
+            <label className="flex flex-col gap-1.5 sm:col-span-2">
               <span className="text-sm font-medium text-zinc-700">Name</span>
               <input
                 type="text"
@@ -456,15 +457,15 @@ export default function DebtsPage() {
             </label>
             <label className="flex flex-col gap-1.5">
               <span className="text-sm font-medium text-zinc-700">Start</span>
-                <input
-                  type="month"
+                <DatePicker
+                  monthOnly
                   value={startMonth}
-                  onChange={(e) => setStartMonth(e.target.value)}
-                  required
-                  className="rounded-lg border border-amber-900/20 px-3 py-2 text-sm text-zinc-900 focus:border-amber-700 focus:outline-none"
+                  onChange={setStartMonth}
+                  min={monthKey(new Date())}
+                  placeholder="Select month"
                 />
               </label>
-              <div className="flex items-end sm:col-span-2 lg:col-span-4">
+              <div className="flex items-end sm:col-span-2">
                 <button
                   type="submit"
                   disabled={submitting}
