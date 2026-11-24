@@ -171,3 +171,26 @@ CREATE TABLE IF NOT EXISTS user_documents (
     PRIMARY KEY (user_id, doc_key)
 );
 
+-- Row Level Security (RLS).
+--
+-- This app does NOT use Supabase/PostgREST. All access goes through the Go
+-- backend, which connects directly to Postgres as a privileged role (the
+-- "postgres"/service role has BYPASSRLS), so it is unaffected by the policies
+-- below. We still enable RLS on every table in the public schema because any
+-- Supabase project auto-exposes public tables over its REST API to the "anon"
+-- and "authenticated" roles. Enabling RLS with NO policies denies all access to
+-- those roles, closing that hole without breaking the Go backend.
+ALTER TABLE users               ENABLE ROW LEVEL SECURITY;
+ALTER TABLE expenses            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE income              ENABLE ROW LEVEL SECURITY;
+ALTER TABLE savings             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE savings_funds       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE investment_sales    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE investment_holdings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE debts               ENABLE ROW LEVEL SECURITY;
+ALTER TABLE budget_amounts      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE budget_type_options ENABLE ROW LEVEL SECURITY;
+ALTER TABLE habits              ENABLE ROW LEVEL SECURITY;
+ALTER TABLE habit_checkins      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_documents      ENABLE ROW LEVEL SECURITY;
+

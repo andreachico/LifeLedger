@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { BudgetPlan, Expense } from "@/lib/types";
@@ -289,9 +289,15 @@ function IconPicker({
   iconForName?: (name: string) => string;
   onSetIcon?: (name: string, icon: string) => void;
 }) {
+  const disabled = value.trim() === "";
   return (
     <div className="flex flex-col gap-1.5 sm:col-span-2">
       <span className="text-sm font-medium text-zinc-900">Icon</span>
+      {disabled && (
+        <span className="text-xs text-amber-900/60">
+          Enter a category name first to choose an icon.
+        </span>
+      )}
       <div className="flex flex-wrap gap-1.5">
         {CATEGORY_ICONS.map((icon) => {
           const selected = iconForName?.(value) === icon.id;
@@ -302,12 +308,13 @@ function IconPicker({
               title={icon.label}
               aria-label={icon.label}
               aria-pressed={selected}
+              disabled={disabled}
               onClick={() => onSetIcon?.(value, selected ? "" : icon.id)}
               className={`flex h-9 w-9 items-center justify-center rounded-lg border transition-all ${iconColor(icon.id)} ${
                 selected
                   ? "border-amber-600 ring-2 ring-amber-500 ring-offset-1"
                   : "border-transparent opacity-70 hover:opacity-100"
-              }`}
+              } ${disabled ? "cursor-not-allowed opacity-40 hover:opacity-40" : ""}`}
             >
               <CategoryIcon id={icon.id} size={18} />
             </button>
@@ -871,11 +878,6 @@ export default function BudgetSheet({
     );
   }
 
-  // Names the user explicitly added for a section (renamable / deletable).
-  function editableTypesFor(sectionId: string): Set<string> {
-    return new Set((typeOptions[sectionId] ?? []).map((o) => o.name));
-  }
-
   // Category option pending deletion, confirmed via a modal (null = none).
   const [pendingDeleteType, setPendingDeleteType] = useState<{
     sectionId: string;
@@ -1278,6 +1280,19 @@ export default function BudgetSheet({
 
   const variableTotal = sectionTotal("variable", VARIABLE_KOSTEN);
 
+  // "Ist" (actual spending) per category for the selected month, mirroring the
+  // Variable Expense page's category table. Keyed by trimmed category name.
+  const istByCategory = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const e of expenses) {
+      if (!e.date.startsWith(month)) continue;
+      const name = e.category.trim();
+      if (!name) continue;
+      map[name] = (map[name] ?? 0) + (Number(e.amount) || 0);
+    }
+    return map;
+  }, [expenses, month]);
+
   // Overall expenses = every section plus the variable costs. Rest is whatever
   // is left of the paycheck after all planned costs.
   const overallExpenses =
@@ -1475,16 +1490,9 @@ export default function BudgetSheet({
           custom={customRows.variable ?? []}
           hidden={hidden.variable}
           total={variableTotal}
-          editableTypes={editableTypesFor("variable")}
-          onRenameType={(oldName, newName) =>
-            renameTypeOption("variable", oldName, newName)
-          }
-          onDeleteType={(name) =>
-            setPendingDeleteType({ sectionId: "variable", name })
-          }
+          istByCategory={istByCategory}
           onAddRow={() => setModalSection("variable")}
           onDeleteRow={(rowId) => deleteRow("variable", rowId)}
-          onEditRow={(rowId, patch) => editRow("variable", rowId, patch)}
           onStartEdit={(row, isBuiltin, amount) =>
             startEdit("variable", row, isBuiltin, amount)
           }
@@ -1578,7 +1586,6 @@ export default function BudgetSheet({
               showType={cfg.showType}
               typeOptions={typesFor(modalSection)}
               onAddType={(t) => addTypeOption(modalSection, t)}
-              editableTypes={editableTypesFor(modalSection)}
               onRenameType={(oldName, newName) =>
                 renameTypeOption(modalSection, oldName, newName)
               }
@@ -1610,7 +1617,6 @@ export default function BudgetSheet({
               showType={cfg.showType}
               typeOptions={typesFor(editing.sectionId)}
               onAddType={(t) => addTypeOption(editing.sectionId, t)}
-              editableTypes={editableTypesFor(editing.sectionId)}
               onRenameType={(oldName, newName) =>
                 renameTypeOption(editing.sectionId, oldName, newName)
               }
@@ -1933,18 +1939,7 @@ function CostSection({
                   {showType && (
                     <td className="px-5 py-2 text-amber-900/70">{r.type}</td>
                   )}
-                  <td className="px-3 py-2">
-                    <input
-                      type="text"
-                      value={r.category}
-                      onChange={(e) =>
-                        onEditRow(section.id, r.id, { category: e.target.value })
-                      }
-                      placeholder="Category"
-                      aria-label="Category"
-                      className="w-full rounded-md bg-transparent px-2 py-1 text-sm font-medium text-zinc-900 hover:bg-amber-900/5 focus:bg-amber-50 focus:outline-none"
-                    />
-                  </td>
+                  <td className="px-3 py-2 font-medium">{r.category}</td>
                   <td className="px-3 py-2 text-center font-semibold tabular-nums text-zinc-900">
                     {displayAmount(amounts[r.id])}
                   </td>
@@ -2003,12 +1998,9 @@ function VariableSection({
   custom,
   hidden,
   total,
-  editableTypes,
-  onRenameType,
-  onDeleteType,
+  istByCategory,
   onAddRow,
   onDeleteRow,
-  onEditRow,
   onStartEdit,
   onAddType,
 }: {
@@ -2017,114 +2009,29 @@ function VariableSection({
   custom: Row[];
   hidden?: Set<string>;
   total: number;
-  editableTypes: Set<string>;
-  onRenameType: (oldName: string, newName: string) => void;
-  onDeleteType: (name: string) => void;
+  istByCategory: Record<string, number>;
   onAddRow: () => void;
   onDeleteRow: (rowId: string) => void;
-  onEditRow: (rowId: string, patch: Partial<Row>) => void;
   onStartEdit: (row: Row, isBuiltin: boolean, amount: string) => void;
   onAddType: (value: string) => void;
 }) {
   const builtinRows = rows.filter((r) => !hidden?.has(r.id));
   const itemCount = builtinRows.length + custom.length;
 
-  // Which row's Type label is being renamed inline (null = none) and its draft.
-  const [editingTypeRow, setEditingTypeRow] = useState<string | null>(null);
-  const [draftType, setDraftType] = useState("");
+  // "Ist" for a row: the actual spending logged against that row's category in
+  // the selected month (sourced from the Variable Expense page's data).
+  const istFor = (category: string) => istByCategory[category.trim()] ?? 0;
 
-  function commitRename(original: string) {
-    const next = draftType.trim();
-    if (next && next !== original) onRenameType(original, next);
-    setEditingTypeRow(null);
-  }
+  // Running total of the Ist column, so the footer mirrors the Soll total.
+  const istTotal =
+    builtinRows.reduce((sum, r) => sum + istFor(r.category), 0) +
+    custom.reduce((sum, r) => sum + istFor(r.category), 0);
 
-  // Type cell: the chosen preset icon (if any) plus the type label. Hovering a
-  // user-added category reveals inline rename (pencil) and delete (trash)
-  // actions, mirroring the dropdown in the add/edit modal.
-  const typeCell = (row: Row) => {
-    const type = row.type;
-    if (editingTypeRow === row.id) {
-      return (
-        <input
-          type="text"
-          value={draftType}
-          autoFocus
-          onChange={(e) => setDraftType(e.target.value)}
-          onBlur={() => commitRename(type)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              commitRename(type);
-            } else if (e.key === "Escape") {
-              e.preventDefault();
-              setEditingTypeRow(null);
-            }
-          }}
-          aria-label="Rename category"
-          className="w-full rounded-md border border-amber-600 bg-amber-50 px-2 py-1 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-amber-600/20"
-        />
-      );
-    }
-    const canModify = Boolean(type) && editableTypes.has(type);
-    return (
-      <span className="inline-flex items-center gap-1.5">
-        {type}
-        {canModify && (
-          <span className="ml-1 inline-flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-            <button
-              type="button"
-              aria-label={`Rename ${type}`}
-              onClick={() => {
-                setDraftType(type);
-                setEditingTypeRow(row.id);
-              }}
-              className="flex h-6 w-6 items-center justify-center rounded text-amber-900/60 transition-colors hover:bg-amber-900/10 hover:text-amber-900"
-            >
-              <svg
-                width={13}
-                height={13}
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M12 20h9" />
-                <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              aria-label={`Delete ${type}`}
-              onClick={() => onDeleteType(type)}
-              className="flex h-6 w-6 items-center justify-center rounded text-amber-900/60 transition-colors hover:bg-red-50 hover:text-red-600"
-            >
-              <svg
-                width={13}
-                height={13}
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <polyline points="3 6 5 6 21 6" />
-                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                <path d="M10 11v6" />
-                <path d="M14 11v6" />
-                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-              </svg>
-            </button>
-          </span>
-        )}
-      </span>
-    );
-  };
+  // Type cell: just the type label. Type management (rename/delete) lives in the
+  // add/edit row modal's dropdown, so the table row stays read-only on hover.
+  const typeCell = (row: Row) => (
+    <span className="inline-flex items-center gap-1.5">{row.type}</span>
+  );
 
   return (
     <section className="mb-8 overflow-hidden rounded-xl border border-amber-900/20 bg-white shadow-sm">
@@ -2165,7 +2072,9 @@ function VariableSection({
               <td className="px-3 py-2 text-center font-semibold tabular-nums text-zinc-900">
                 {displayAmount(amounts[r.id])}
               </td>
-              <td className="px-5 py-2 text-center text-amber-900/50">—</td>
+              <td className="px-5 py-2 text-center font-semibold tabular-nums text-amber-900">
+                {currency.format(istFor(r.category))}
+              </td>
               <td className="px-3 py-2 text-right">
                 <RowActions
                   onEdit={() => onStartEdit(r, true, amounts[r.id] ?? "")}
@@ -2178,20 +2087,13 @@ function VariableSection({
           {custom.map((r) => (
             <tr key={r.id} className="group hover:bg-amber-900/5">
               <td className="px-5 py-2 text-amber-900/70">{typeCell(r)}</td>
-              <td className="px-3 py-2">
-                <input
-                  type="text"
-                  value={r.category}
-                  onChange={(e) => onEditRow(r.id, { category: e.target.value })}
-                  placeholder="Category"
-                  aria-label="Category"
-                  className="w-full rounded-md bg-transparent px-2 py-1 text-sm font-medium text-zinc-900 hover:bg-amber-900/5 focus:bg-amber-50 focus:outline-none"
-                />
-              </td>
+              <td className="px-3 py-2 font-medium">{r.category}</td>
               <td className="px-3 py-2 text-center font-semibold tabular-nums text-zinc-900">
                 {displayAmount(amounts[r.id])}
               </td>
-              <td className="px-5 py-2 text-center text-amber-900/50">—</td>
+              <td className="px-5 py-2 text-center font-semibold tabular-nums text-amber-900">
+                {currency.format(istFor(r.category))}
+              </td>
               <td className="px-3 py-2 text-right">
                 <RowActions
                   onEdit={() => onStartEdit(r, false, amounts[r.id] ?? "")}
@@ -2211,7 +2113,9 @@ function VariableSection({
             <td className="px-3 py-3 text-center font-semibold tabular-nums text-emerald-700">
               {currency.format(total)}
             </td>
-            <td />
+            <td className="px-5 py-3 text-center font-semibold tabular-nums text-amber-900">
+              {currency.format(istTotal)}
+            </td>
             <td />
           </tr>
         </tfoot>
@@ -2233,7 +2137,6 @@ function RowModal({
   showType,
   typeOptions,
   onAddType,
-  editableTypes,
   onRenameType,
   onDeleteType,
   showIcons,
@@ -2252,7 +2155,6 @@ function RowModal({
   showType: boolean;
   typeOptions: string[];
   onAddType: (type: string) => void;
-  editableTypes?: Set<string>;
   onRenameType?: (oldName: string, newName: string) => void;
   onDeleteType?: (name: string) => void;
   showIcons?: boolean;
@@ -2359,11 +2261,6 @@ function RowModal({
                   onAddNew={onAddType}
                   onRename={onRenameType}
                   onDelete={onDeleteType}
-                  isEditable={
-                    editableTypes
-                      ? (opt) => editableTypes.has(opt)
-                      : undefined
-                  }
                   placeholder="Select a type"
                   addLabel="Add new type…"
                   ariaLabel="Type"
@@ -2390,15 +2287,13 @@ function RowModal({
               />
             </label>
 
-            {showIcons &&
-              iconSubject === "category" &&
-              category.trim() !== "" && (
-                <IconPicker
-                  value={category}
-                  iconForName={iconForName}
-                  onSetIcon={onSetTypeIcon}
-                />
-              )}
+            {showIcons && iconSubject === "category" && (
+              <IconPicker
+                value={category}
+                iconForName={iconForName}
+                onSetIcon={onSetTypeIcon}
+              />
+            )}
 
             <label className="flex flex-col gap-1.5">
               <span className="text-sm font-medium text-zinc-900">
