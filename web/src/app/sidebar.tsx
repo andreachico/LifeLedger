@@ -37,7 +37,7 @@ const NAV_GROUPS: NavGroup[] = [
         ),
       },
       {
-        href: "/",
+        href: "/variable-expense",
         label: "Variable Expense",
         icon: (
           <>
@@ -181,14 +181,13 @@ export default function Sidebar() {
             strokeLinejoin="round"
             className="h-5 w-5"
           >
-            <path d="M4 4h12a2 2 0 0 1 2 2v14l-4-2-4 2-4-2-2 1V6a2 2 0 0 1 2-2Z" />
-            <line x1="8" y1="8" x2="14" y2="8" />
-            <line x1="8" y1="12" x2="14" y2="12" />
+            <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
+            <polyline points="16 7 22 7 22 13" />
           </svg>
         </span>
         <span className="flex flex-col leading-tight">
           <span className="font-serif text-xl font-semibold tracking-tight text-amber-50">
-            Life Ledger
+            LifeLedger
           </span>
           <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-100/40">
             Money · Habits · Year
