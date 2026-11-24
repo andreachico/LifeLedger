@@ -1,8 +1,9 @@
 "use client";
 
-// Left navigation. Groups the workspace views under two sections — "Finance
-// Overview" (budgets, expenses, income, …) and "Year Overview" (the calendar of
-// holidays/birthdays/vacation) — and highlights whichever matches the route.
+// Left navigation. A dark, serif-branded rail grouping the workspace views under
+// "Finance Overview", "Year Overview" and "Habits", with the Dashboard pinned at
+// the top and the signed-in user at the bottom. The active route is highlighted
+// with the amber/terracotta accent.
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -135,13 +136,42 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
+// Shared classes for a nav link, highlighting the active route with the
+// terracotta accent and dimming the rest against the dark rail.
+function navClass(active: boolean): string {
+  return `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
+    active
+      ? "bg-[#c06a3e] text-white shadow-sm shadow-black/20"
+      : "text-amber-50/65 hover:bg-white/5 hover:text-amber-50"
+  }`;
+}
+
+function NavIcon({ children }: { children: React.ReactNode }) {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  );
+}
+
 export default function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col overflow-y-auto border-r border-amber-900/15 bg-white p-4 sm:flex">
-      <div className="my-4 flex items-center gap-2.5 px-2 pb-4 pt-1">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-amber-800 to-amber-600 text-amber-50 shadow-md shadow-amber-900/20">
+    <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col overflow-y-auto bg-[#1b241f] p-4 text-amber-50 sm:flex">
+      {/* Brand */}
+      <div className="my-3 flex items-center gap-3 px-2 pb-5 pt-1">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#c06a3e] text-white shadow-md shadow-black/30">
           <svg
             viewBox="0 0 24 24"
             fill="none"
@@ -151,48 +181,43 @@ export default function Sidebar() {
             strokeLinejoin="round"
             className="h-5 w-5"
           >
-            <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
-            <polyline points="16 7 22 7 22 13" />
+            <path d="M4 4h12a2 2 0 0 1 2 2v14l-4-2-4 2-4-2-2 1V6a2 2 0 0 1 2-2Z" />
+            <line x1="8" y1="8" x2="14" y2="8" />
+            <line x1="8" y1="12" x2="14" y2="12" />
           </svg>
         </span>
-        <span className="text-base font-semibold text-amber-900">
-          LifeLedger
+        <span className="flex flex-col leading-tight">
+          <span className="font-serif text-xl font-semibold tracking-tight text-amber-50">
+            Life Ledger
+          </span>
+          <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-100/40">
+            Money · Habits · Year
+          </span>
         </span>
       </div>
-      <div className="px-3 pb-2 pt-1 text-xs font-semibold uppercase tracking-wider text-amber-900/50">
+
+      {/* Workspace */}
+      <div className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-amber-100/35">
         Workspace
       </div>
-      <nav className="flex flex-col gap-4">
+      <nav className="flex flex-col gap-5">
         <Link
           href="/overview"
           aria-current={pathname === "/overview" ? "page" : undefined}
-          className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium ${
-            pathname === "/overview"
-              ? "bg-amber-900/90 text-amber-50"
-              : "text-amber-900/70 hover:bg-amber-900/5"
-          }`}
+          className={navClass(pathname === "/overview")}
         >
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
+          <NavIcon>
             <rect x="3" y="3" width="7" height="9" rx="1" />
             <rect x="14" y="3" width="7" height="5" rx="1" />
             <rect x="14" y="12" width="7" height="9" rx="1" />
             <rect x="3" y="16" width="7" height="5" rx="1" />
-          </svg>
+          </NavIcon>
           Dashboard
         </Link>
+
         {NAV_GROUPS.map((group) => (
           <div key={group.title} className="flex flex-col gap-1">
-            <div className="px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider text-amber-900/40">
+            <div className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-amber-100/35">
               {group.title}
             </div>
             {group.items.map((item) => {
@@ -202,25 +227,9 @@ export default function Sidebar() {
                   key={item.href}
                   href={item.href}
                   aria-current={active ? "page" : undefined}
-                  className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium ${
-                    active
-                      ? "bg-amber-900/90 text-amber-50"
-                      : "text-amber-900/70 hover:bg-amber-900/5"
-                  }`}
+                  className={navClass(active)}
                 >
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    {item.icon}
-                  </svg>
+                  <NavIcon>{item.icon}</NavIcon>
                   {item.label}
                 </Link>
               );
@@ -263,37 +272,41 @@ function UserMenu() {
   }
 
   return (
-    <div className="mt-auto border-t border-amber-900/10 pt-3">
-      <div className="flex items-center gap-3 px-2 py-1">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-200 text-xs font-semibold uppercase text-amber-900">
+    <div className="mt-auto border-t border-white/10 pt-3">
+      <div className="group flex items-center gap-3 px-2 py-1">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#d4a24a] text-xs font-semibold uppercase text-[#1b241f]">
           {user ? initials(user) : "··"}
         </span>
-        <span className="truncate text-sm font-medium text-zinc-900">
-          {user ? fullName(user) : "…"}
+        <span className="flex min-w-0 flex-col leading-tight">
+          <span className="truncate text-sm font-medium text-amber-50">
+            {user ? fullName(user) : "…"}
+          </span>
+          <span className="text-[11px] text-amber-100/40">Signed in</span>
         </span>
-      </div>
-      <button
-        type="button"
-        onClick={handleLogout}
-        className="mt-1 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-amber-900/70 hover:bg-amber-900/5"
-      >
-        <svg
-          width="20"
-          height="20"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
+        <button
+          type="button"
+          onClick={handleLogout}
+          title="Sign out"
+          aria-label="Sign out"
+          className="ml-auto rounded-lg p-2 text-amber-50/60 hover:bg-white/5 hover:text-amber-50"
         >
-          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-          <polyline points="16 17 21 12 16 7" />
-          <line x1="21" y1="12" x2="9" y2="12" />
-        </svg>
-        Sign out
-      </button>
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
+          </svg>
+        </button>
+      </div>
     </div>
   );
 }
