@@ -21,7 +21,7 @@ export default function Chrome({ children }: { children: React.ReactNode }) {
   return (
     <>
       <Sidebar />
-      <div className="flex flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col">
         {showTopBar && <TopBar />}
         {children}
       </div>

@@ -16,6 +16,7 @@ import {
 import SpendingCharts, { type OverviewBucket } from "../spending-charts";
 import BudgetDropdown from "../budget-dropdown";
 import ConfirmDialog from "../confirm-dialog";
+import { iconColor } from "../category-icons";
 
 const currency = new Intl.NumberFormat("en-IE", {
   style: "currency",
@@ -276,8 +277,47 @@ function CategoryIcon({ id, size = 16 }: { id?: string; size?: number }) {
   );
 }
 
+// Icon picker grid for the row modal. Each preset shows in its own pastel color
+// (shared with the Variable Expense page); the chosen one is highlighted with a
+// ring. `value` is the type/category the icon is attached to.
+function IconPicker({
+  value,
+  iconForName,
+  onSetIcon,
+}: {
+  value: string;
+  iconForName?: (name: string) => string;
+  onSetIcon?: (name: string, icon: string) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5 sm:col-span-2">
+      <span className="text-sm font-medium text-zinc-900">Icon</span>
+      <div className="flex flex-wrap gap-1.5">
+        {CATEGORY_ICONS.map((icon) => {
+          const selected = iconForName?.(value) === icon.id;
+          return (
+            <button
+              key={icon.id}
+              type="button"
+              title={icon.label}
+              aria-label={icon.label}
+              aria-pressed={selected}
+              onClick={() => onSetIcon?.(value, selected ? "" : icon.id)}
+              className={`flex h-9 w-9 items-center justify-center rounded-lg border transition-all ${iconColor(icon.id)} ${
+                selected
+                  ? "border-amber-600 ring-2 ring-amber-500 ring-offset-1"
+                  : "border-transparent opacity-70 hover:opacity-100"
+              }`}
+            >
+              <CategoryIcon id={icon.id} size={18} />
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
-// Shared props for the small summary-card icons.
 const cardIcon = {
   width: 18,
   height: 18,
@@ -329,6 +369,12 @@ const DEFAULT_SECTION_IDS = new Set(["fix", "others"]);
 // Variable Kosten has its own Soll / Ist layout, kept separate from the
 // Type / Category / Budget sections above.
 const VARIABLE_KOSTEN: Row[] = [];
+
+// Type-options section id used to store per-category icon choices for the
+// Variable Kosten table. Kept separate from the "variable" Type options so a
+// category's icon never clashes with a type's icon. The Variable Expense page
+// reads this same slice to render each category's icon.
+const VARIABLE_CATEGORY_SECTION = "variable-category";
 
 // User-created tables (sections). Persisted to the backend plan under a
 // "table:<id>" key so they sync across devices (per month, like custom rows).
@@ -1429,7 +1475,6 @@ export default function BudgetSheet({
           custom={customRows.variable ?? []}
           hidden={hidden.variable}
           total={variableTotal}
-          iconFor={(name) => iconFor("variable", name)}
           editableTypes={editableTypesFor("variable")}
           onRenameType={(oldName, newName) =>
             renameTypeOption("variable", oldName, newName)
@@ -1541,9 +1586,10 @@ export default function BudgetSheet({
                 setPendingDeleteType({ sectionId: modalSection, name })
               }
               showIcons={modalSection === "variable"}
-              iconForName={(name) => iconFor(modalSection, name)}
+              iconSubject="category"
+              iconForName={(name) => iconFor(VARIABLE_CATEGORY_SECTION, name)}
               onSetTypeIcon={(name, icon) =>
-                setTypeIcon(modalSection, name, icon)
+                setTypeIcon(VARIABLE_CATEGORY_SECTION, name, icon)
               }
               onClose={() => setModalSection(null)}
               onSubmit={(data) => addRow(modalSection, data)}
@@ -1572,9 +1618,10 @@ export default function BudgetSheet({
                 setPendingDeleteType({ sectionId: editing.sectionId, name })
               }
               showIcons={editing.sectionId === "variable"}
-              iconForName={(name) => iconFor(editing.sectionId, name)}
+              iconSubject="category"
+              iconForName={(name) => iconFor(VARIABLE_CATEGORY_SECTION, name)}
               onSetTypeIcon={(name, icon) =>
-                setTypeIcon(editing.sectionId, name, icon)
+                setTypeIcon(VARIABLE_CATEGORY_SECTION, name, icon)
               }
               initial={editing.initial}
               onClose={() => setEditing(null)}
@@ -1956,7 +2003,6 @@ function VariableSection({
   custom,
   hidden,
   total,
-  iconFor,
   editableTypes,
   onRenameType,
   onDeleteType,
@@ -1971,7 +2017,6 @@ function VariableSection({
   custom: Row[];
   hidden?: Set<string>;
   total: number;
-  iconFor: (name: string) => string;
   editableTypes: Set<string>;
   onRenameType: (oldName: string, newName: string) => void;
   onDeleteType: (name: string) => void;
@@ -2024,11 +2069,6 @@ function VariableSection({
     const canModify = Boolean(type) && editableTypes.has(type);
     return (
       <span className="inline-flex items-center gap-1.5">
-        {iconFor(type) && (
-          <span className="text-amber-700">
-            <CategoryIcon id={iconFor(type)} />
-          </span>
-        )}
         {type}
         {canModify && (
           <span className="ml-1 inline-flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
@@ -2199,6 +2239,7 @@ function RowModal({
   showIcons,
   iconForName,
   onSetTypeIcon,
+  iconSubject = "type",
   initial,
   onClose,
   onSubmit,
@@ -2217,6 +2258,9 @@ function RowModal({
   showIcons?: boolean;
   iconForName?: (name: string) => string;
   onSetTypeIcon?: (name: string, icon: string) => void;
+  // Which field the icon picker is tied to. "type" (default) shows the picker
+  // once a Type is chosen; "category" ties the icon to the Category value.
+  iconSubject?: "type" | "category";
   initial?: { type: string; category: string; amount: string; due: string };
   onClose: () => void;
   onSubmit: (data: {
@@ -2327,34 +2371,12 @@ function RowModal({
               </label>
             )}
 
-            {showType && showIcons && type.trim() !== "" && (
-              <div className="flex flex-col gap-1.5 sm:col-span-2">
-                <span className="text-sm font-medium text-zinc-900">Icon</span>
-                <div className="flex flex-wrap gap-1.5">
-                  {CATEGORY_ICONS.map((icon) => {
-                    const selected = iconForName?.(type) === icon.id;
-                    return (
-                      <button
-                        key={icon.id}
-                        type="button"
-                        title={icon.label}
-                        aria-label={icon.label}
-                        aria-pressed={selected}
-                        onClick={() =>
-                          onSetTypeIcon?.(type, selected ? "" : icon.id)
-                        }
-                        className={`flex h-9 w-9 items-center justify-center rounded-lg border transition-colors ${
-                          selected
-                            ? "border-amber-600 bg-amber-100 text-amber-800"
-                            : "border-amber-900/15 text-amber-900/60 hover:border-amber-600/40 hover:bg-amber-900/5"
-                        }`}
-                      >
-                        <CategoryIcon id={icon.id} size={18} />
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+            {showIcons && iconSubject === "type" && type.trim() !== "" && (
+              <IconPicker
+                value={type}
+                iconForName={iconForName}
+                onSetIcon={onSetTypeIcon}
+              />
             )}
 
             <label className="flex flex-col gap-1.5">
@@ -2367,6 +2389,16 @@ function RowModal({
                 className={fieldClass}
               />
             </label>
+
+            {showIcons &&
+              iconSubject === "category" &&
+              category.trim() !== "" && (
+                <IconPicker
+                  value={category}
+                  iconForName={iconForName}
+                  onSetIcon={onSetTypeIcon}
+                />
+              )}
 
             <label className="flex flex-col gap-1.5">
               <span className="text-sm font-medium text-zinc-900">

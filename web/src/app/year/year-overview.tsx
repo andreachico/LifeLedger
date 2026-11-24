@@ -199,6 +199,10 @@ export default function YearOverview() {
   const [year, setYear] = useState(new Date().getFullYear());
   const [events, setEvents] = useState<CalEvent[]>([]);
   const [loaded, setLoaded] = useState(false);
+  // Whether the initial load actually succeeded. Auto-saving is gated on this so
+  // a failed/interrupted read can never overwrite the backend with an empty
+  // array and wipe out events we simply failed to fetch.
+  const [loadOk, setLoadOk] = useState(false);
   // The day whose modal is open (ISO date), or "" for a blank Add-event modal,
   // or null when closed.
   const [modalDate, setModalDate] = useState<string | null>(null);
@@ -218,6 +222,9 @@ export default function YearOverview() {
       try {
         const stored = await getUserDoc<CalEvent[]>(STORAGE_KEY);
         if (!active) return;
+        // The read itself succeeded, so persisting is now safe: either we have
+        // the user's events or the server genuinely has none.
+        setLoadOk(true);
         if (stored && stored.length) {
           setEvents(stored);
           return;
@@ -236,7 +243,8 @@ export default function YearOverview() {
           void saveUserDoc(STORAGE_KEY, legacy).catch(() => {});
         }
       } catch {
-        // Ignore load/parse failures; the user can still add events from empty.
+        // Load/parse failed: reveal the UI, but leave loadOk false so the save
+        // effect stays disabled and can't clobber the backend with empty data.
       } finally {
         if (active) setLoaded(true);
       }
@@ -246,13 +254,15 @@ export default function YearOverview() {
     };
   }, []);
 
-  // Save user events whenever they change.
+  // Save user events whenever they change, but only once a load has succeeded.
+  // Gating on loadOk (not just loaded) prevents a failed read from persisting an
+  // empty array over the user's real events.
   useEffect(() => {
-    if (!loaded) return;
+    if (!loaded || !loadOk) return;
     void saveUserDoc(STORAGE_KEY, events).catch(() => {
       // Ignore save failures; the next change retries.
     });
-  }, [events, loaded]);
+  }, [events, loaded, loadOk]);
 
   // Seeded holidays for the selected year, combined with the user's own events.
   const holidays = useMemo(() => berlinHolidays(year), [year]);
@@ -314,14 +324,14 @@ export default function YearOverview() {
   // identical avoids any hydration mismatch.
   if (!loaded) {
     return (
-      <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-4 py-10">
+      <main className="flex w-full flex-1 flex-col gap-8 px-4 py-10">
         <div className="h-64 animate-pulse rounded-2xl bg-amber-900/5" />
       </main>
     );
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-4 py-10">
+    <main className="flex w-full min-w-0 flex-1 flex-col gap-8 px-4 py-10">
       <header className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
         <div className="flex items-center gap-3">
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-linear-to-br from-amber-800 to-amber-600 text-amber-50 shadow-md shadow-amber-900/20">
@@ -451,7 +461,7 @@ export default function YearOverview() {
       </div>
 
       {/* Calendar grid */}
-      <section className="rounded-2xl border border-amber-900/15 bg-white p-5 shadow-sm">
+      <section className="min-w-0 rounded-2xl border border-amber-900/15 bg-white p-5 shadow-sm">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-semibold text-zinc-900">

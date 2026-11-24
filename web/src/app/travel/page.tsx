@@ -102,6 +102,10 @@ function statsFor(dest: Destination, refMonth: string, eingezahlt: number) {
 export default function TravelPage() {
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [loaded, setLoaded] = useState(false);
+  // Whether the initial load actually succeeded. Auto-saving is gated on this so
+  // a failed/interrupted read can never overwrite the backend with an empty
+  // array and wipe out trips we simply failed to fetch.
+  const [loadOk, setLoadOk] = useState(false);
   const [refYear, setRefYear] = useState(() => String(new Date().getFullYear()));
   // Sinking-fund deposits from the budget sheet, flattened for name matching.
   const [funds, setFunds] = useState<{ match: string; total: number }[]>([]);
@@ -121,10 +125,14 @@ export default function TravelPage() {
     let active = true;
     getUserDoc<Destination[]>(STORAGE_KEY)
       .then((stored) => {
-        if (active && stored) setDestinations(stored);
+        if (!active) return;
+        // The read succeeded, so persisting is now safe.
+        setLoadOk(true);
+        if (stored) setDestinations(stored);
       })
       .catch(() => {
-        // Ignore load failures; the user can still start from an empty plan.
+        // Load failed: reveal the UI, but leave loadOk false so the save effect
+        // stays disabled and can't clobber the backend with an empty plan.
       })
       .finally(() => {
         if (active) setLoaded(true);
@@ -135,11 +143,11 @@ export default function TravelPage() {
   }, []);
 
   useEffect(() => {
-    if (!loaded) return;
+    if (!loaded || !loadOk) return;
     void saveUserDoc(STORAGE_KEY, destinations).catch(() => {
       // Ignore save failures; the next change retries.
     });
-  }, [destinations, loaded]);
+  }, [destinations, loaded, loadOk]);
 
   // Load how much has already been paid into each trip's sinking fund from the
   // budget sheet. Amounts are summed across every saved month; labels come from

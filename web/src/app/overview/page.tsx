@@ -269,33 +269,111 @@ function isDue(h: Habit, iso: string): boolean {
   return true; // daily & weekly show as a daily cell on the grid
 }
 
-function currentStreak(set: Set<string>): number {
+// --- Streaks (schedule-aware) ---
+// Day index = whole days since the Unix epoch, computed in UTC so consecutive
+// calendar days always differ by exactly 1 regardless of daylight-saving shifts.
+const dayIndex = (iso: string): number => {
+  const [y, m, d] = iso.split("-").map(Number);
+  return Math.floor(Date.UTC(y, m - 1, d) / 86400000);
+};
+// Today's day index, from the local calendar date.
+const todayIndex = (): number => {
   const d = new Date();
-  const iso = (x: Date) =>
-    `${x.getFullYear()}-${pad(x.getMonth() + 1)}-${pad(x.getDate())}`;
-  if (!set.has(iso(d))) d.setDate(d.getDate() - 1);
+  return dayIndex(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+};
+// Weekday (0=Sun..6=Sat) for a day index. Epoch day 0 (1970-01-01) was a Thursday.
+const weekdayOfIndex = (idx: number): number => (((idx % 7) + 4) % 7 + 7) % 7;
+// Monday-based week number for a day index (epoch day 4 was the first Monday).
+const weekIndex = (idx: number): number => Math.floor((idx - 4) / 7);
+
+// Whether a habit is scheduled on a given day index. Daily habits run every day;
+// "weekdays" habits only on their chosen weekdays. (Weekly habits are measured
+// per week, not per day, so they never gate on a single day here.)
+function isScheduledIndex(h: Habit, idx: number): boolean {
+  if (h.frequency === "weekdays") {
+    return h.weekdays?.includes(weekdayOfIndex(idx)) ?? false;
+  }
+  return true;
+}
+
+function currentStreak(h: Habit, checkins: string[]): number {
+  const done = new Set(checkins.map(dayIndex));
+  if (h.frequency === "weekly") return currentWeeklyStreak(done);
+  if (h.frequency === "weekdays" && !h.weekdays?.length) return 0;
+
+  const today = todayIndex();
+  // Most recent scheduled day on or before today.
+  let idx = today;
+  while (!isScheduledIndex(h, idx)) idx--;
+  // Grace for today: a scheduled occurrence that just hasn't been done *yet*
+  // shouldn't break the streak, so measure from the previous occurrence instead.
+  if (idx === today && !done.has(idx)) {
+    idx--;
+    while (!isScheduledIndex(h, idx)) idx--;
+  }
   let streak = 0;
-  while (set.has(iso(d))) {
+  while (done.has(idx)) {
     streak++;
-    d.setDate(d.getDate() - 1);
+    idx--;
+    while (!isScheduledIndex(h, idx)) idx--;
   }
   return streak;
 }
 
-function longestStreak(checkins: string[]): number {
-  const sorted = [...new Set(checkins)].sort();
+// Current streak for weekly habits: consecutive calendar weeks (Monday-based)
+// that each contain at least one check-in, with grace for the current week.
+function currentWeeklyStreak(done: Set<number>): number {
+  const weeks = new Set<number>();
+  for (const idx of done) weeks.add(weekIndex(idx));
+  let w = weekIndex(todayIndex());
+  if (!weeks.has(w)) w--;
+  let streak = 0;
+  while (weeks.has(w)) {
+    streak++;
+    w--;
+  }
+  return streak;
+}
+
+function longestStreak(h: Habit, checkins: string[]): number {
+  const done = new Set(checkins.map(dayIndex));
+  if (h.frequency === "weekly") {
+    const weeks = [...new Set([...done].map(weekIndex))].sort((a, b) => a - b);
+    return longestRun(weeks);
+  }
+  if (h.frequency === "weekdays" && !h.weekdays?.length) return 0;
+
+  // Longest run of consecutive *scheduled* days that were all checked in, so a
+  // weekend never breaks a Mon–Fri habit's streak.
+  const indices = [...done]
+    .filter((idx) => isScheduledIndex(h, idx))
+    .sort((a, b) => a - b);
   let best = 0;
   let run = 0;
   let prev: number | null = null;
-  for (const iso of sorted) {
-    const t = new Date(`${iso}T00:00:00`).getTime();
-    if (prev !== null && t - prev === 86400000) {
-      run++;
+  for (const idx of indices) {
+    if (prev !== null) {
+      let p = idx - 1;
+      while (!isScheduledIndex(h, p)) p--;
+      run = p === prev ? run + 1 : 1;
     } else {
       run = 1;
     }
     best = Math.max(best, run);
-    prev = t;
+    prev = idx;
+  }
+  return best;
+}
+
+// Longest run of consecutive integers in a sorted, de-duplicated list.
+function longestRun(sorted: number[]): number {
+  let best = 0;
+  let run = 0;
+  let prev: number | null = null;
+  for (const n of sorted) {
+    run = prev !== null && n - prev === 1 ? run + 1 : 1;
+    best = Math.max(best, run);
+    prev = n;
   }
   return best;
 }
@@ -464,8 +542,8 @@ export default async function OverviewPage() {
     return {
       habit: h,
       set,
-      streak: currentStreak(set),
-      best: longestStreak(h.checkins),
+      streak: currentStreak(h, h.checkins),
+      best: longestStreak(h, h.checkins),
     };
   });
   const dueToday = habits.filter((h) => isDue(h, todayStr));
@@ -490,8 +568,11 @@ export default async function OverviewPage() {
   const fortnight = windowStats(14);
   const weekPct = week.due > 0 ? Math.round((week.done / week.due) * 100) : 0;
   const longest = habitRows.reduce(
-    (best, r) => (r.best > best.best ? { best: r.best, name: r.habit.name } : best),
-    { best: 0, name: "" },
+    (best, r) =>
+      r.best > best.best
+        ? { best: r.best, name: r.habit.name, frequency: r.habit.frequency }
+        : best,
+    { best: 0, name: "", frequency: "daily" as Habit["frequency"] },
   );
 
   // --- Travel fund: the nearest upcoming trip ---
@@ -963,7 +1044,15 @@ export default async function OverviewPage() {
                 />
                 <Stat
                   label="Longest streak"
-                  value={`${longest.best} days`}
+                  value={`${longest.best} ${
+                    longest.frequency === "weekly"
+                      ? longest.best === 1
+                        ? "week"
+                        : "weeks"
+                      : longest.best === 1
+                        ? "day"
+                        : "days"
+                  }`}
                   hint={longest.name}
                 />
               </div>
@@ -1253,7 +1342,7 @@ export default async function OverviewPage() {
       </section>
 
       <p className="pb-2 text-center text-xs text-[#2c2420]/35">
-        Life Ledger
+        LifeLedger
       </p>
     </main>
   );

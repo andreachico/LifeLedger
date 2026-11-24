@@ -1,19 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { Expense } from "@/lib/types";
+import type { BudgetPlan, Expense } from "@/lib/types";
 import {
   createExpense,
   deleteExpense,
+  getBudgetPlan,
   getBudgetTypeOptions,
-  getUserDoc,
-  saveBudgetTypeOptions,
-  saveUserDoc,
-  type BudgetTypeOption,
 } from "@/lib/api";
 import SpendingCharts from "./spending-charts";
 import BudgetDropdown from "./budget-dropdown";
-import ConfirmDialog from "./confirm-dialog";
 import { CATEGORY_ICONS, CategoryGlyph, iconColor } from "./category-icons";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -37,10 +33,14 @@ const MONTHS = [
 const monthKey = (year: number, month: number) =>
   `${year}-${String(month + 1).padStart(2, "0")}`;
 
-// Section id the shared backend type-options store uses for variable-expense
-// categories. The budget sheet's "Variable Kosten" table uses the same key, so
-// categories + icons are one source of truth across both screens.
-const VARIABLE_OPTIONS_KEY = "variable";
+// Plan-key prefix the budget sheet uses for its "Variable Kosten" rows, e.g.
+// "variable:<id>". Those rows are the single source of truth for this page's
+// categories (their Category column) and planned "Soll" amounts.
+const VARIABLE_PREFIX = "variable:";
+
+// Type-options section id the budget sheet uses to store each category's chosen
+// icon (name -> icon id). Read here so the category table shows those icons.
+const VARIABLE_CATEGORY_SECTION = "variable-category";
 
 // Each category gets its own pastel badge color. Full class strings are used so
 // Tailwind's compiler can detect them.
@@ -195,176 +195,92 @@ export default function ExpenseDashboard({
   const [search, setSearch] = useState("");
   // Whether the "Add expense" modal is open.
   const [showAddModal, setShowAddModal] = useState(false);
-  // Category pending deletion, confirmed via a modal (null = none).
-  const [pendingDeleteCategory, setPendingDeleteCategory] = useState<
-    string | null
-  >(null);
   const [error, setError] = useState<string | null>(initialError ?? null);
   const now = new Date();
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
-  // Budget targets ("soll") keyed by month then category, e.g.
-  // budgets["2026-01"]["Groceries"]. Persisted per-account in the backend so the
-  // targets follow the user across devices.
-  const BUDGETS_DOC_KEY = "expense-budgets";
-  const [budgets, setBudgets] = useState<
-    Record<string, Record<string, string>>
-  >({});
-  // Becomes true only after persisted budgets have been loaded. Using state (not
-  // a ref) keeps this flag consistent with `budgets` within each render, so the
-  // save effect never writes the empty initial state over stored values.
-  const [budgetsLoaded, setBudgetsLoaded] = useState(false);
 
-  // User-added categories + their preset icons live in the shared backend
-  // type-options store under the "variable" key, so they sync per-account and
-  // match the budget sheet's Variable Kosten table. Keyed by section id; we only
-  // read/write the "variable" slice here but keep the whole record so saving
-  // doesn't clobber the budget sheet's other sections.
-  const [typeOptions, setTypeOptions] = useState<
-    Record<string, BudgetTypeOption[]>
-  >({});
-  const [typeOptionsLoaded, setTypeOptionsLoaded] = useState(false);
+  const periodKey = monthKey(selectedYear, selectedMonth);
 
-  // The variable-expense options (name + optional icon) from the backend.
-  const variableOptions = useMemo(
-    () => typeOptions[VARIABLE_OPTIONS_KEY] ?? [],
-    [typeOptions],
-  );
-  // All variable-expense category names, derived from the backend options. There
-  // are no built-in defaults — every category is user-defined and editable.
-  const customCategories = useMemo(
-    () => variableOptions.map((o) => o.name),
-    [variableOptions],
-  );
-  // Preset icon per category (name -> icon id), derived from the backend options.
-  const categoryIcons = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const o of variableOptions) {
-      if (o.icon) map[o.name] = o.icon;
-    }
-    return map;
-  }, [variableOptions]);
-  // Full category list shown in the dropdown (deduplicated).
-  const categories = Array.from(new Set(customCategories));
-
-  // Load persisted budgets once on the client, after mount. Starting from {} on
-  // both server and client keeps the initial render identical (no hydration
-  // mismatch); the stored values are applied immediately afterward.
+  // The selected month's budget plan from the budget sheet. Its "Variable Kosten"
+  // rows are the single source of truth for this page: the categories shown here
+  // come from each row's Category column, and the Soll column is the sum of those
+  // rows' planned amounts. Reloaded whenever the selected month changes.
+  const [budgetPlan, setBudgetPlan] = useState<BudgetPlan>({});
   useEffect(() => {
     let active = true;
-    getUserDoc<Record<string, Record<string, string>>>(BUDGETS_DOC_KEY)
-      .then((stored) => {
-        if (active && stored) setBudgets(stored);
+    getBudgetPlan(periodKey)
+      .then((plan) => {
+        if (active) setBudgetPlan(plan ?? {});
       })
       .catch(() => {
-        // Ignore load failures; the user can still edit from an empty state.
-      })
-      .finally(() => {
-        if (active) setBudgetsLoaded(true);
+        // Ignore load failures; the page still works with no planned amounts.
+        if (active) setBudgetPlan({});
       });
     return () => {
       active = false;
     };
-  }, []);
+  }, [periodKey]);
 
-  // Load the shared variable-expense categories + icons from the backend once on
-  // mount. Keeps the whole record so saves don't drop the budget sheet's other
-  // sections.
+  // Per-category icons chosen on the budget sheet (category name -> icon id).
+  // Loaded once from the shared type-options store; the budget sheet owns these.
+  const [categoryIcons, setCategoryIcons] = useState<Record<string, string>>(
+    {},
+  );
   useEffect(() => {
     let active = true;
     getBudgetTypeOptions()
       .then((opts) => {
-        if (active) setTypeOptions(opts);
+        if (!active) return;
+        const map: Record<string, string> = {};
+        for (const o of opts[VARIABLE_CATEGORY_SECTION] ?? []) {
+          if (o.icon) map[o.name] = o.icon;
+        }
+        setCategoryIcons(map);
       })
       .catch(() => {
-        // Ignore load failures; the dropdown still works from the defaults.
-      })
-      .finally(() => {
-        if (active) setTypeOptionsLoaded(true);
+        // Ignore load failures; categories fall back to name-based glyphs.
       });
     return () => {
       active = false;
     };
   }, []);
 
-  // Save budgets whenever they change so the values persist across sessions. Only
-  // runs after the initial load so it never overwrites saved values with the
-  // empty initial state.
-  useEffect(() => {
-    if (!budgetsLoaded) return;
-    void saveUserDoc(BUDGETS_DOC_KEY, budgets).catch(() => {
-      // Ignore save failures; the next change retries.
-    });
-  }, [budgets, budgetsLoaded]);
+  // The month's Variable Kosten rows (plan keys look like "variable:<id>").
+  const variableEntries = useMemo(
+    () =>
+      Object.entries(budgetPlan)
+        .filter(([key]) => key.startsWith(VARIABLE_PREFIX))
+        .map(([, entry]) => entry),
+    [budgetPlan],
+  );
 
-  // Persist category + icon changes to the shared backend store. Only runs after
-  // the initial load so it never overwrites saved options with the empty state.
-  useEffect(() => {
-    if (!typeOptionsLoaded) return;
-    void saveBudgetTypeOptions(typeOptions).catch(() => {
-      // Ignore save failures; the next change retries.
-    });
-  }, [typeOptions, typeOptionsLoaded]);
-
-  // Mutate the "variable" slice of the backend type-options, leaving the budget
-  // sheet's other sections untouched.
-  function updateVariableOptions(
-    fn: (current: BudgetTypeOption[]) => BudgetTypeOption[],
-  ) {
-    setTypeOptions((prev) => ({
-      ...prev,
-      [VARIABLE_OPTIONS_KEY]: fn(prev[VARIABLE_OPTIONS_KEY] ?? []),
-    }));
-  }
-
-  // Add a user-defined category from the expense form dropdown. Ignores blanks
-  // and anything already present.
-  function addCategory(name: string) {
-    const v = name.trim();
-    if (!v || customCategories.includes(v)) {
-      return;
-    }
-    updateVariableOptions((current) => [...current, { name: v, icon: "" }]);
-  }
-
-  // Rename a category: update the option, keep its icon, and keep the form
-  // selection in sync.
-  function renameCategory(oldName: string, newName: string) {
-    const next = newName.trim();
-    if (!next || next === oldName) return;
-    if (customCategories.includes(next)) {
-      return; // name already taken
-    }
-    updateVariableOptions((current) =>
-      current.map((o) => (o.name === oldName ? { ...o, name: next } : o)),
-    );
-    setForm((prev) =>
-      prev.category === oldName ? { ...prev, category: next } : prev,
-    );
-  }
-
-  // Delete a category and its icon. Clears the form selection if it pointed at
-  // the deleted category.
-  function deleteCategory(name: string) {
-    updateVariableOptions((current) => current.filter((o) => o.name !== name));
-    setForm((prev) =>
-      prev.category === name ? { ...prev, category: "" } : prev,
-    );
-  }
-
-  // Set or clear the preset icon for a category. Creates the option if the
-  // category isn't a saved custom one yet (e.g. picking an icon for a default).
-  function setCategoryIcon(category: string, icon: string) {
-    const c = category.trim();
-    if (!c) return;
-    updateVariableOptions((current) => {
-      const exists = current.some((o) => o.name === c);
-      if (exists) {
-        return current.map((o) => (o.name === c ? { ...o, icon } : o));
+  // Categories come straight from the Variable Kosten "Category" column, in the
+  // order the rows appear, with blanks and duplicates removed.
+  const categories = useMemo(() => {
+    const seen = new Set<string>();
+    const list: string[] = [];
+    for (const entry of variableEntries) {
+      const name = entry.category.trim();
+      if (name && !seen.has(name)) {
+        seen.add(name);
+        list.push(name);
       }
-      return [...current, { name: c, icon }];
-    });
-  }
+    }
+    return list;
+  }, [variableEntries]);
+
+  // Soll ("planned") per category: the sum of every Variable Kosten row that
+  // shares that category in the selected month.
+  const sollByCategory = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const entry of variableEntries) {
+      const name = entry.category.trim();
+      if (!name) continue;
+      map[name] = (map[name] ?? 0) + (Number(entry.amount) || 0);
+    }
+    return map;
+  }, [variableEntries]);
 
   // Changing the month/year both filters the list and sets the date new
   // expenses are saved under.
@@ -428,19 +344,10 @@ export default function ExpenseDashboard({
       .filter((e) => e.category === category)
       .reduce((sum, e) => sum + e.amount, 0);
 
-  const periodKey = monthKey(selectedYear, selectedMonth);
-  const monthBudgets = budgets[periodKey] ?? {};
-  function setBudget(category: string, value: string) {
-    setBudgets((prev) => ({
-      ...prev,
-      [periodKey]: { ...(prev[periodKey] ?? {}), [category]: value },
-    }));
-  }
-
-  // Summary figures derived from the per-category budgets ("soll") and the
-  // month's actual spending.
+  // Summary figures derived from the budget sheet's per-category "soll" totals
+  // and the month's actual spending.
   const monthlyBudget = categories.reduce(
-    (sum, c) => sum + Number(monthBudgets[c] ?? 0),
+    (sum, c) => sum + (sollByCategory[c] ?? 0),
     0,
   );
   const leftToSpend = monthlyBudget - total;
@@ -462,20 +369,6 @@ export default function ExpenseDashboard({
       <div className="min-w-0 flex-1">
       <header className="mb-8 flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
         <div className="flex items-center gap-3">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-linear-to-br from-amber-800 to-amber-600 text-amber-50 shadow-md shadow-amber-900/20">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="h-6 w-6"
-            >
-              <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
-              <polyline points="16 7 22 7 22 13" />
-            </svg>
-          </span>
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">
               Variable Expenses
@@ -592,7 +485,7 @@ export default function ExpenseDashboard({
             <tbody className="divide-y divide-amber-900/10">
               {categories.map((cat) => {
                 const ist = istForCategory(cat);
-                const soll = Number(monthBudgets[cat] ?? "");
+                const soll = sollByCategory[cat] ?? 0;
                 const over = soll > 0 && ist > soll;
                 const remaining = soll - ist;
                 return (
@@ -603,21 +496,8 @@ export default function ExpenseDashboard({
                         {cat}
                       </span>
                     </td>
-                    <td className="px-3 py-2 text-center">
-                      <span className="inline-flex items-center justify-center gap-1">
-                        <span className="text-sm font-semibold text-amber-900/50">
-                          €
-                        </span>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          placeholder="0"
-                          value={monthBudgets[cat] ?? ""}
-                          onChange={(e) => setBudget(cat, e.target.value)}
-                          className="min-w-[2ch] bg-transparent text-left text-sm font-semibold tabular-nums text-zinc-900 [appearance:textfield] [field-sizing:content] focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                        />
-                      </span>
+                    <td className="px-3 py-2 text-center font-semibold tabular-nums text-zinc-900">
+                      {currency.format(soll)}
                     </td>
                     <td
                       className={`px-3 py-2 text-center font-semibold tabular-nums ${
@@ -769,33 +649,12 @@ export default function ExpenseDashboard({
         <AddExpenseModal
           form={form}
           categories={categories}
-          categoryIcons={categoryIcons}
           submitting={submitting}
           onChange={(patch) => setForm((prev) => ({ ...prev, ...patch }))}
-          onAddCategory={addCategory}
-          onRenameCategory={renameCategory}
-          onDeleteCategory={(name) => setPendingDeleteCategory(name)}
-          onSetCategoryIcon={setCategoryIcon}
           onSubmit={handleSubmit}
           onClose={() => setShowAddModal(false)}
         />
       )}
-
-      <ConfirmDialog
-        open={pendingDeleteCategory !== null}
-        title="Delete category?"
-        message={
-          pendingDeleteCategory
-            ? `"${pendingDeleteCategory}" will be removed from the category list. Existing expenses keep their label.`
-            : ""
-        }
-        confirmLabel="Delete"
-        onConfirm={() => {
-          if (pendingDeleteCategory) deleteCategory(pendingDeleteCategory);
-          setPendingDeleteCategory(null);
-        }}
-        onCancel={() => setPendingDeleteCategory(null)}
-      />
     </main>
   );
 }
@@ -806,25 +665,15 @@ export default function ExpenseDashboard({
 function AddExpenseModal({
   form,
   categories,
-  categoryIcons,
   submitting,
   onChange,
-  onAddCategory,
-  onRenameCategory,
-  onDeleteCategory,
-  onSetCategoryIcon,
   onSubmit,
   onClose,
 }: {
   form: typeof emptyForm;
   categories: string[];
-  categoryIcons: Record<string, string>;
   submitting: boolean;
   onChange: (patch: Partial<typeof emptyForm>) => void;
-  onAddCategory: (name: string) => void;
-  onRenameCategory: (oldName: string, newName: string) => void;
-  onDeleteCategory: (name: string) => void;
-  onSetCategoryIcon: (category: string, icon: string) => void;
   onSubmit: (e: React.FormEvent) => void;
   onClose: () => void;
 }) {
@@ -905,12 +754,7 @@ function AddExpenseModal({
                 value={form.category}
                 options={categories}
                 onChange={(v) => onChange({ category: v })}
-                onAddNew={onAddCategory}
-                onRename={onRenameCategory}
-                onDelete={onDeleteCategory}
-                onSetIcon={onSetCategoryIcon}
                 placeholder="Select a category"
-                addLabel="Add new category…"
                 ariaLabel="Category"
               />
             </label>
