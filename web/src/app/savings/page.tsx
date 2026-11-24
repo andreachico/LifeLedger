@@ -2,25 +2,20 @@
 
 // Savings page: each fund's running total combines deposits planned in the
 // Budget sheet (summed per month) with withdrawals recorded here. A deposit adds
-// to the total; a withdrawal subtracts from it. Funds are defined by the user —
-// add your own from the "Withdraw from" dropdown — and persist per account. Only
-// withdrawals are editable here; deposits come from the budget.
+// to the total; a withdrawal subtracts from it. Funds are defined and managed in
+// the Budget Sheet's Savings table; here you can only record withdrawals against
+// an existing fund.
 import { useCallback, useEffect, useState } from "react";
 import {
   createSaving,
-  createSavingsFund,
-  deleteBudgetEntry,
   deleteSaving,
-  deleteSavingsFund,
   getBudgetBreakdown,
   getBudgetPlan,
   getSavings,
   getSavingsFunds,
-  renameSavingsFund,
 } from "@/lib/api";
 import type { BudgetPlan, Saving } from "@/lib/types";
 import BudgetDropdown from "../budget-dropdown";
-import ConfirmDialog from "../confirm-dialog";
 import DatePicker from "../date-picker";
 
 // Friendly labels for funds that used to ship as built-ins, so a returning
@@ -78,7 +73,6 @@ export default function SavingsPage() {
   const [amount, setAmount] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -105,82 +99,6 @@ export default function SavingsPage() {
     load();
   }, [load]);
 
-  // Add a fund to the backend catalog (ignoring case-insensitive dupes).
-  async function addFund(raw: string) {
-    const label = raw.trim();
-    if (!label) return;
-    if (funds.some((f) => f.toLowerCase() === label.toLowerCase())) return;
-    setFunds((prev) => [...prev, label]);
-    try {
-      await createSavingsFund(label);
-    } catch (err) {
-      setFunds((prev) => prev.filter((f) => f !== label));
-      setError(err instanceof Error ? err.message : "failed to add fund");
-    }
-  }
-
-  // Rename a user-added fund in the catalog. Since withdrawals have no update
-  // endpoint, any recorded withdrawals are recreated under the new name.
-  async function renameFund(oldLabel: string, newLabel: string) {
-    const trimmed = newLabel.trim();
-    if (!trimmed || trimmed === oldLabel) return;
-    const clash = funds.some(
-      (f) =>
-        f.toLowerCase() === trimmed.toLowerCase() &&
-        f.toLowerCase() !== oldLabel.toLowerCase(),
-    );
-    if (clash) {
-      setError("A fund with that name already exists.");
-      return;
-    }
-    setFunds((prev) => prev.map((f) => (f === oldLabel ? trimmed : f)));
-    if (name.toLowerCase() === oldLabel.toLowerCase()) setName(trimmed);
-    try {
-      await renameSavingsFund(oldLabel, trimmed);
-      const affected = withdrawals.filter(
-        (s) => s.name.toLowerCase() === oldLabel.toLowerCase(),
-      );
-      for (const s of affected) {
-        await createSaving({
-          name: trimmed,
-          amount: s.amount,
-          month: s.month,
-        });
-        await deleteSaving(s.id);
-      }
-      if (affected.length > 0) await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "failed to rename fund");
-      await load();
-    }
-  }
-
-  // Delete a fund everywhere: its catalog entry (if any), its planned budget
-  // deposits across all months, and any recorded withdrawals. This lets the user
-  // remove any dropdown choice, including ones that only came from the budget.
-  async function deleteFund(label: string) {
-    const lower = label.toLowerCase();
-    const affected = withdrawals.filter((s) => s.name.toLowerCase() === lower);
-    const keys = Object.keys(breakdown).filter((k) => {
-      if (!k.startsWith("savings:")) return false;
-      const t = plan[k]?.type?.trim();
-      const fundLabel = t ? t : keyToLabel(k);
-      return fundLabel.toLowerCase() === lower;
-    });
-    try {
-      if (funds.some((f) => f.toLowerCase() === lower)) {
-        await deleteSavingsFund(label);
-      }
-      for (const s of affected) await deleteSaving(s.id);
-      for (const k of keys) await deleteBudgetEntry(k);
-      if (name.toLowerCase() === lower) setName("");
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "failed to delete fund");
-      await load();
-    }
-  }
-
   async function handleWithdraw(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
@@ -192,7 +110,6 @@ export default function SavingsPage() {
         month: date.slice(0, 7),
       });
       setWithdrawals((prev) => [created, ...prev]);
-      addFund(name);
       setAmount("");
       setError(null);
     } catch (err) {
@@ -242,7 +159,6 @@ export default function SavingsPage() {
   withdrawals.forEach((s) => pushLabel(s.name));
 
   // Build each fund's rows (budget deposits + recorded withdrawals) and net total.
-  const userFundSet = new Set(funds.map((f) => f.toLowerCase()));
   const fundData = fundLabels.map((label) => {
     const lower = label.toLowerCase();
     const deposits: Row[] = depositKeys
@@ -299,13 +215,7 @@ export default function SavingsPage() {
             value={name}
             options={fundLabels}
             onChange={setName}
-            onAddNew={addFund}
-            onRename={renameFund}
-            onDelete={(label) => setPendingDelete(label)}
-            isEditable={(label) => userFundSet.has(label.toLowerCase())}
-            isDeletable={() => true}
             placeholder="Select fund…"
-            addLabel="Add fund…"
             ariaLabel="Fund to withdraw from"
           />
         </label>
@@ -351,8 +261,8 @@ export default function SavingsPage() {
         </p>
       ) : fundLabels.length === 0 ? (
         <p className="rounded-xl border border-dashed border-amber-900/25 bg-white px-6 py-10 text-center text-sm text-amber-900/60">
-          No funds yet. Use the “Withdraw from” dropdown above to add your first
-          fund.
+          No funds yet. Add a fund in the Budget Sheet’s Savings table to get
+          started.
         </p>
       ) : (
         <div className="grid gap-4 md:grid-cols-3">
@@ -438,19 +348,6 @@ export default function SavingsPage() {
           ))}
         </div>
       )}
-
-      <ConfirmDialog
-        open={pendingDelete !== null}
-        title="Delete fund"
-        message={`Delete “${pendingDelete}”, its planned budget deposits, and any withdrawals recorded for it? This cannot be undone.`}
-        confirmLabel="Delete"
-        onCancel={() => setPendingDelete(null)}
-        onConfirm={() => {
-          const label = pendingDelete;
-          setPendingDelete(null);
-          if (label) deleteFund(label);
-        }}
-      />
     </main>
   );
 }
