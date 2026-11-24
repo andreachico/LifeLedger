@@ -74,6 +74,7 @@ export default function DatePicker({
   onChange,
   placeholder = "Select date",
   monthOnly = false,
+  defaultView,
 }: {
   value: string;
   min?: string;
@@ -82,17 +83,20 @@ export default function DatePicker({
   // When true the picker selects a whole month: value/onChange use "YYYY-MM"
   // and the popover shows a month grid instead of days.
   monthOnly?: boolean;
+  // "YYYY-MM" to open the calendar on when there's no value yet (falls back to
+  // the current month). Lets callers seed the view, e.g. a trip's travel month.
+  defaultView?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState(() =>
-    value ? value.slice(0, 7) : currentMonth(),
+    value ? value.slice(0, 7) : defaultView || currentMonth(),
   );
   const ref = useRef<HTMLDivElement>(null);
 
   // Keep the calendar on the selected month whenever it (re)opens.
   useEffect(() => {
-    if (open) setView(value ? value.slice(0, 7) : currentMonth());
-  }, [open, value]);
+    if (open) setView(value ? value.slice(0, 7) : defaultView || currentMonth());
+  }, [open, value, defaultView]);
 
   // Close on outside click or Escape.
   useEffect(() => {

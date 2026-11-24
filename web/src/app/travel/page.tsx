@@ -772,6 +772,7 @@ function DestinationModal({
             <DatePicker
               value={from}
               onChange={setFrom}
+              defaultView={month}
               placeholder="Pick a start date"
             />
           </Field>
@@ -780,6 +781,7 @@ function DestinationModal({
               value={to}
               min={from || undefined}
               onChange={setTo}
+              defaultView={from ? from.slice(0, 7) : month}
               placeholder="Pick an end date"
             />
           </Field>
