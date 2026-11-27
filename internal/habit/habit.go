@@ -23,13 +23,15 @@ const (
 // accent shown in the UI (a hex string like "#dc2626"). Frequency (with Weekdays
 // when it is "weekdays") describes the habit's schedule.
 type Habit struct {
-	ID        int      `json:"id"`
-	Name      string   `json:"name"`
-	Category  string   `json:"category"`
-	Color     string   `json:"color"`
-	Frequency string   `json:"frequency"`
-	Weekdays  []int    `json:"weekdays"` // 0=Sun..6=Sat, used when Frequency=="weekdays"
-	Checkins  []string `json:"checkins"`
+	ID           int      `json:"id"`
+	Name         string   `json:"name"`
+	Category     string   `json:"category"`
+	Color        string   `json:"color"`
+	Frequency    string   `json:"frequency"`
+	Weekdays     []int    `json:"weekdays"` // 0=Sun..6=Sat, used when Frequency=="weekdays"
+	StartMonth   string   `json:"startMonth"`   // "YYYY-MM"; the first month the habit is shown. Empty means always.
+	HiddenMonths []string `json:"hiddenMonths"` // "YYYY-MM" months the habit was removed from individually
+	Checkins     []string `json:"checkins"`
 }
 
 // ErrNotFound is returned when a habit doesn't exist (or isn't the caller's).
@@ -39,8 +41,14 @@ var ErrNotFound = errors.New("habit not found")
 // day/month ranges; the DATE column rejects genuinely invalid dates.
 var datePattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
+// monthPattern matches a "YYYY-MM" month key, used for start/hidden months.
+var monthPattern = regexp.MustCompile(`^\d{4}-\d{2}$`)
+
 // ValidDate reports whether s is a well-formed "YYYY-MM-DD" date string.
 func ValidDate(s string) bool { return datePattern.MatchString(s) }
+
+// ValidMonth reports whether s is a well-formed "YYYY-MM" month string.
+func ValidMonth(s string) bool { return monthPattern.MatchString(s) }
 
 // Normalize tidies user input before validation and storage.
 func (h *Habit) Normalize() {
@@ -48,6 +56,7 @@ func (h *Habit) Normalize() {
 	h.Category = strings.TrimSpace(h.Category)
 	h.Color = strings.TrimSpace(h.Color)
 	h.Frequency = strings.TrimSpace(h.Frequency)
+	h.StartMonth = strings.TrimSpace(h.StartMonth)
 	if h.Frequency == "" {
 		h.Frequency = FreqDaily
 	}
@@ -78,6 +87,9 @@ func normalizeWeekdays(days []int) []int {
 func (h Habit) Validate() error {
 	if strings.TrimSpace(h.Name) == "" {
 		return errors.New("name is required")
+	}
+	if h.StartMonth != "" && !ValidMonth(h.StartMonth) {
+		return errors.New("startMonth must be in YYYY-MM format")
 	}
 	switch h.Frequency {
 	case FreqDaily, FreqWeekly:

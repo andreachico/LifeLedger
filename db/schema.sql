@@ -153,11 +153,21 @@ CREATE INDEX IF NOT EXISTS habits_user_idx ON habits (user_id);
 -- Add the schedule columns to databases created before they existed.
 ALTER TABLE habits ADD COLUMN IF NOT EXISTS frequency TEXT NOT NULL DEFAULT 'daily';
 ALTER TABLE habits ADD COLUMN IF NOT EXISTS weekdays TEXT NOT NULL DEFAULT '';
+-- The first "YYYY-MM" month a habit is shown; empty means shown in every month.
+ALTER TABLE habits ADD COLUMN IF NOT EXISTS start_month TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS habit_checkins (
     habit_id INTEGER NOT NULL REFERENCES habits (id) ON DELETE CASCADE,
     date     DATE NOT NULL,
     PRIMARY KEY (habit_id, date)
+);
+
+-- Months a habit was removed from individually: the habit stays visible in every
+-- other month. One row per "YYYY-MM" the habit is hidden from.
+CREATE TABLE IF NOT EXISTS habit_hidden_months (
+    habit_id INTEGER NOT NULL REFERENCES habits (id) ON DELETE CASCADE,
+    month    TEXT NOT NULL,
+    PRIMARY KEY (habit_id, month)
 );
 
 -- Generic per-user JSON documents. Backs views that used to persist only to the

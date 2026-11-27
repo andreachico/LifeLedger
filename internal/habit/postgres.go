@@ -41,7 +41,7 @@ func (s *PostgresStore) List(ctx context.Context) ([]Habit, error) {
 	userID := auth.UserID(ctx)
 
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, category, color, frequency, weekdays FROM habits WHERE user_id = $1 ORDER BY id`,
+		`SELECT id, name, category, color, frequency, weekdays, start_month FROM habits WHERE user_id = $1 ORDER BY id`,
 		userID)
 	if err != nil {
 		return nil, fmt.Errorf("querying habits: %w", err)
@@ -54,11 +54,12 @@ func (s *PostgresStore) List(ctx context.Context) ([]Habit, error) {
 			h   Habit
 			wds string
 		)
-		if err := rows.Scan(&h.ID, &h.Name, &h.Category, &h.Color, &h.Frequency, &wds); err != nil {
+		if err := rows.Scan(&h.ID, &h.Name, &h.Category, &h.Color, &h.Frequency, &wds, &h.StartMonth); err != nil {
 			return nil, fmt.Errorf("scanning habit: %w", err)
 		}
 		h.Weekdays = csvToWeekdays(wds)
 		h.Checkins = []string{}
+		h.HiddenMonths = []string{}
 		list = append(list, h)
 	}
 	if err := rows.Err(); err != nil {
@@ -93,21 +94,49 @@ func (s *PostgresStore) List(ctx context.Context) ([]Habit, error) {
 			h.Checkins = append(h.Checkins, d.Format("2006-01-02"))
 		}
 	}
-	return list, crows.Err()
+	if err := crows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Attach the per-habit hidden months (months the habit was removed from).
+	mrows, err := s.pool.Query(ctx,
+		`SELECT m.habit_id, m.month
+		 FROM habit_hidden_months m JOIN habits h ON h.id = m.habit_id
+		 WHERE h.user_id = $1
+		 ORDER BY m.month`,
+		userID)
+	if err != nil {
+		return nil, fmt.Errorf("querying habit hidden months: %w", err)
+	}
+	defer mrows.Close()
+	for mrows.Next() {
+		var (
+			habitID int
+			month   string
+		)
+		if err := mrows.Scan(&habitID, &month); err != nil {
+			return nil, fmt.Errorf("scanning hidden month: %w", err)
+		}
+		if h := byID[habitID]; h != nil {
+			h.HiddenMonths = append(h.HiddenMonths, month)
+		}
+	}
+	return list, mrows.Err()
 }
 
 // Create inserts a new habit owned by the caller and returns it with its new ID.
 func (s *PostgresStore) Create(ctx context.Context, h Habit) (Habit, error) {
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO habits (name, category, color, frequency, weekdays, user_id)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+		`INSERT INTO habits (name, category, color, frequency, weekdays, start_month, user_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
 		 RETURNING id`,
-		h.Name, h.Category, h.Color, h.Frequency, weekdaysToCSV(h.Weekdays), auth.UserID(ctx),
+		h.Name, h.Category, h.Color, h.Frequency, weekdaysToCSV(h.Weekdays), h.StartMonth, auth.UserID(ctx),
 	).Scan(&h.ID)
 	if err != nil {
 		return Habit{}, fmt.Errorf("inserting habit: %w", err)
 	}
 	h.Checkins = []string{}
+	h.HiddenMonths = []string{}
 	if h.Weekdays == nil {
 		h.Weekdays = []int{}
 	}
@@ -140,6 +169,22 @@ func (s *PostgresStore) Delete(ctx context.Context, id int) error {
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	return nil
+}
+
+// HideMonth records a "YYYY-MM" month as removed for one of the caller's habits.
+// ON CONFLICT DO NOTHING makes it idempotent.
+func (s *PostgresStore) HideMonth(ctx context.Context, id int, month string) error {
+	if err := s.ensureOwner(ctx, id); err != nil {
+		return err
+	}
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO habit_hidden_months (habit_id, month) VALUES ($1, $2)
+		 ON CONFLICT (habit_id, month) DO NOTHING`,
+		id, month)
+	if err != nil {
+		return fmt.Errorf("hiding habit month: %w", err)
 	}
 	return nil
 }

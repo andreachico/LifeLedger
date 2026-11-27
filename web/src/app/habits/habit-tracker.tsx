@@ -9,7 +9,7 @@ import type { Habit, HabitFrequency } from "@/lib/types";
 import {
   createHabit,
   updateHabit,
-  deleteHabit as apiDeleteHabit,
+  hideHabitMonth,
   addHabitCheckin,
   removeHabitCheckin,
 } from "@/lib/api";
@@ -138,10 +138,25 @@ export default function HabitTracker({
     [totalDays],
   );
   const monthPrefix = `${year}-${pad(month + 1)}-`;
+  const monthKey = `${year}-${pad(month + 1)}`;
   const monthLabel = new Date(year, month, 1).toLocaleDateString("en-GB", {
     month: "long",
     year: "numeric",
   });
+
+  // Habits shown for the displayed month: those whose start month has been
+  // reached (an empty start month means always) and that haven't been removed
+  // from this specific month. Deleting a habit only hides that one month, so it
+  // keeps appearing in the others.
+  const visibleHabits = useMemo(
+    () =>
+      habits.filter(
+        (h) =>
+          (!h.startMonth || monthKey >= h.startMonth) &&
+          !(h.hiddenMonths ?? []).includes(monthKey),
+      ),
+    [habits, monthKey],
+  );
 
   const todayIso = isoDate(now.getFullYear(), now.getMonth(), now.getDate());
 
@@ -245,14 +260,23 @@ export default function HabitTracker({
     return monthCheckins.length;
   };
 
-  const totalCheckins = habits.reduce((sum, h) => sum + monthlyCount(h), 0);
-  const totalDone = habits.reduce((sum, h) => sum + achievedCount(h), 0);
-  const totalTarget = habits.reduce((sum, h) => sum + expectedCount(h), 0);
+  const totalCheckins = visibleHabits.reduce(
+    (sum, h) => sum + monthlyCount(h),
+    0,
+  );
+  const totalDone = visibleHabits.reduce(
+    (sum, h) => sum + achievedCount(h),
+    0,
+  );
+  const totalTarget = visibleHabits.reduce(
+    (sum, h) => sum + expectedCount(h),
+    0,
+  );
   const monthPct =
     totalTarget > 0 ? Math.round((totalDone / totalTarget) * 100) : 0;
 
   // Most consistent first, ranked by how much of each habit's schedule is done.
-  const ranked = [...habits]
+  const ranked = [...visibleHabits]
     .map((h) => {
       const target = expectedCount(h);
       const done = achievedCount(h);
@@ -267,7 +291,7 @@ export default function HabitTracker({
   const topConsistent = ranked.filter((r) => r.done > 0).slice(0, 3);
   // Habits at or below 50% of their schedule so far (counting only elapsed days),
   // lowest completion first.
-  const needsImprovement = [...habits]
+  const needsImprovement = [...visibleHabits]
     .map((h) => {
       const target = expectedToDate(h);
       const done = achievedToDate(h);
@@ -341,6 +365,7 @@ export default function HabitTracker({
         color,
         frequency,
         weekdays: days,
+        startMonth: monthKey,
       });
       setHabits((prev) => [...prev, created]);
     } catch {
@@ -385,11 +410,19 @@ export default function HabitTracker({
     }
   }
 
+  // Delete removes the habit from the displayed month only: it is hidden for
+  // this "YYYY-MM" while staying visible in every other month.
   async function deleteHabit(id: number) {
     const previous = habits;
-    setHabits((prev) => prev.filter((h) => h.id !== id));
+    setHabits((prev) =>
+      prev.map((h) =>
+        h.id === id
+          ? { ...h, hiddenMonths: [...(h.hiddenMonths ?? []), monthKey] }
+          : h,
+      ),
+    );
     try {
-      await apiDeleteHabit(id);
+      await hideHabitMonth(id, monthKey);
     } catch {
       setHabits(previous);
     }
@@ -492,7 +525,7 @@ export default function HabitTracker({
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
         <StatCard
           title="Daily habits"
-          value={String(habits.length)}
+          value={String(visibleHabits.length)}
           caption="Little commitments, every day"
           icon={
             <>
@@ -530,7 +563,7 @@ export default function HabitTracker({
       {/* Monthly completion donut */}
       <div className="max-w-xl">
         <CompletionDonut
-          segments={habits.map((h) => ({
+          segments={visibleHabits.map((h) => ({
             id: h.id,
             name: h.name,
             count: achievedCount(h),
@@ -575,7 +608,7 @@ export default function HabitTracker({
         </div>
 
         <div className="overflow-x-auto rounded-2xl border border-amber-900/15 bg-white shadow-sm">
-          {habits.length === 0 ? (
+          {visibleHabits.length === 0 ? (
             <div className="flex flex-col items-center gap-2 px-6 py-16 text-center">
               <p className="text-sm font-medium text-zinc-900">No habits yet.</p>
               <p className="text-sm text-amber-900/60">
@@ -630,7 +663,7 @@ export default function HabitTracker({
                 </tr>
               </thead>
               <tbody className="divide-y divide-amber-900/10">
-                {habits.map((h) => {
+                {visibleHabits.map((h) => {
                   const done = achievedCount(h);
                   const target = expectedCount(h);
                   const pct =
