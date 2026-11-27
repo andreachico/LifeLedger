@@ -81,15 +81,18 @@ export interface Habit {
   color: string;
   frequency: HabitFrequency;
   weekdays: number[];
+  startMonth: string; // "YYYY-MM"; the first month the habit is shown. Empty = always.
+  hiddenMonths: string[]; // "YYYY-MM" months the habit was removed from individually
   checkins: string[];
 }
 
 // What the client sends to create or update a habit: just the editable fields
-// (the server assigns the id and owns the check-ins).
+// (the server assigns the id and owns the check-ins). `startMonth` is sent on
+// create so the habit only appears from that month onward; it is ignored on update.
 export type NewHabit = Pick<
   Habit,
   "name" | "category" | "color" | "frequency" | "weekdays"
->;
+> & { startMonth?: string };
 
 export interface Debt {
   id: number;

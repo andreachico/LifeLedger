@@ -23,6 +23,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /habits", h.create)
 	mux.HandleFunc("PUT /habits/{id}", h.update)
 	mux.HandleFunc("DELETE /habits/{id}", h.delete)
+	mux.HandleFunc("DELETE /habits/{id}/months/{month}", h.hideMonth)
 	mux.HandleFunc("PUT /habits/{id}/checkins/{date}", h.addCheckin)
 	mux.HandleFunc("DELETE /habits/{id}/checkins/{date}", h.removeCheckin)
 }
@@ -87,6 +88,26 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.store.Delete(r.Context(), id); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// hideMonth removes one of the caller's habits from a single "YYYY-MM" month,
+// leaving it visible in every other month.
+func (h *Handler) hideMonth(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "id must be a number")
+		return
+	}
+	month := r.PathValue("month")
+	if !ValidMonth(month) {
+		writeError(w, http.StatusBadRequest, "month must be in YYYY-MM format")
+		return
+	}
+	if err := h.store.HideMonth(r.Context(), id, month); err != nil {
 		writeStoreError(w, err)
 		return
 	}

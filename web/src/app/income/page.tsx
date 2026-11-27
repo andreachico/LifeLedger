@@ -38,6 +38,13 @@ export default function IncomePage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // On mount, honor a "?month=YYYY-MM" param (e.g. from the budget sheet's
+  // Paycheck card) so this page opens on the same month the user was planning.
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search).get("month");
+    if (p && /^\d{4}-\d{2}$/.test(p)) setMonth(p);
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {

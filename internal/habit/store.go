@@ -15,6 +15,7 @@ type Store interface {
 	Create(ctx context.Context, h Habit) (Habit, error)
 	Update(ctx context.Context, id int, h Habit) (Habit, error)
 	Delete(ctx context.Context, id int) error
+	HideMonth(ctx context.Context, id int, month string) error
 	AddCheckin(ctx context.Context, id int, date string) error
 	RemoveCheckin(ctx context.Context, id int, date string) error
 }
@@ -63,6 +64,9 @@ func (s *MemoryStore) Create(ctx context.Context, item Habit) (Habit, error) {
 	if item.Checkins == nil {
 		item.Checkins = []string{}
 	}
+	if item.HiddenMonths == nil {
+		item.HiddenMonths = []string{}
+	}
 	s.items[item.ID] = cloneHabit(item)
 	s.owner[item.ID] = auth.UserID(ctx)
 	return cloneHabit(item), nil
@@ -97,6 +101,28 @@ func (s *MemoryStore) Delete(ctx context.Context, id int) error {
 	}
 	delete(s.items, id)
 	delete(s.owner, id)
+	return nil
+}
+
+// HideMonth marks a single "YYYY-MM" month as removed for one of the caller's
+// habits, so the habit no longer shows in that month while staying in others.
+// It is idempotent: hiding an already-hidden month is a no-op.
+func (s *MemoryStore) HideMonth(ctx context.Context, id int, month string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	item, ok := s.items[id]
+	if !ok || s.owner[id] != auth.UserID(ctx) {
+		return ErrNotFound
+	}
+	for _, m := range item.HiddenMonths {
+		if m == month {
+			return nil
+		}
+	}
+	item.HiddenMonths = append(append([]string(nil), item.HiddenMonths...), month)
+	sort.Strings(item.HiddenMonths)
+	s.items[id] = item
 	return nil
 }
 
@@ -146,5 +172,6 @@ func cloneHabit(h Habit) Habit {
 	cp := h
 	cp.Checkins = append([]string{}, h.Checkins...)
 	cp.Weekdays = append([]int{}, h.Weekdays...)
+	cp.HiddenMonths = append([]string{}, h.HiddenMonths...)
 	return cp
 }

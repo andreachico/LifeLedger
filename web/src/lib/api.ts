@@ -385,6 +385,18 @@ export async function deleteHabit(id: number): Promise<void> {
   if (!res.ok) throw new Error(`delete failed (${res.status})`);
 }
 
+// Remove a habit from a single "YYYY-MM" month only; it stays visible in every
+// other month. Used by the tracker's per-month delete.
+export async function hideHabitMonth(
+  id: number,
+  month: string,
+): Promise<void> {
+  const res = await fetch(`/api/habits/${id}/months/${month}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`delete failed (${res.status})`);
+}
+
 // A check-in is identified by its habit and a "YYYY-MM-DD" date. Adding is
 // idempotent on the server, so retries are safe.
 export async function addHabitCheckin(

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { BudgetPlan, Expense } from "@/lib/types";
 import {
+  getBudgetPlan,
   getBudgetTypeOptions,
   getIncome,
   getInvestmentHoldings,
@@ -444,6 +445,7 @@ function extractTables(plan: BudgetPlan): CustomTable[] {
       section === "table" ||
       section === "override" ||
       section === "hidden" ||
+      section === "paid" ||
       RESERVED_SECTION_IDS.has(section) ||
       seen.has(section)
     )
@@ -534,6 +536,7 @@ function extractCustom(plan: BudgetPlan): CustomRows {
     if (
       section === "meta" ||
       section === "hidden" ||
+      section === "paid" ||
       section === "table" ||
       section === "override"
     )
@@ -570,6 +573,22 @@ function extractHidden(plan: BudgetPlan): Hidden {
   return hidden;
 }
 
+// Rows the user has marked as already paid, per section. Persisted per month as
+// a "paid:<section>:<row>" marker, mirroring the "hidden:" scheme.
+function extractPaid(plan: BudgetPlan): Hidden {
+  const paid: Hidden = {};
+  for (const key of Object.keys(plan)) {
+    if (!key.startsWith("paid:")) continue;
+    const rest = key.slice("paid:".length);
+    const idx = rest.indexOf(":");
+    if (idx === -1) continue;
+    const section = rest.slice(0, idx);
+    const row = rest.slice(idx + 1);
+    (paid[section] ??= new Set()).add(row);
+  }
+  return paid;
+}
+
 // Flatten the editable values + custom rows into the backend's "section:row"
 // map of entries. Built-in cells persist only when filled; custom rows always
 // persist (so an added row survives before an amount is typed, and deletions
@@ -581,6 +600,7 @@ function flatten(
   hidden: Hidden,
   customTables: CustomTable[],
   sectionOverrides: Record<string, SectionOverride>,
+  paid: Hidden,
 ): BudgetPlan {
   const plan: BudgetPlan = {};
   for (const section of Object.keys(values)) {
@@ -616,6 +636,12 @@ function flatten(
       plan[`hidden:${section}:${row}`] = { type: "", category: "", amount: 0 };
     }
   }
+  // Persist which rows are marked as already paid this month.
+  for (const section of Object.keys(paid)) {
+    for (const row of paid[section]) {
+      plan[`paid:${section}:${row}`] = { type: "", category: "", amount: 0 };
+    }
+  }
   // Persist each custom table's definition so it survives reloads even when empty.
   for (const t of customTables) {
     plan[`table:${t.id}`] = {
@@ -644,6 +670,7 @@ function mergePlan(seed: Values, plan: BudgetPlan): Values {
   for (const key of Object.keys(seed)) merged[key] = { ...seed[key] };
   for (const key of Object.keys(plan)) {
     if (key.startsWith("hidden:")) continue;
+    if (key.startsWith("paid:")) continue;
     if (key.startsWith("table:")) continue;
     if (key.startsWith("override:")) continue;
     const idx = key.indexOf(":");
@@ -684,6 +711,8 @@ export default function BudgetSheet({
   );
   // Built-in rows the user has deleted, so they don't reappear from the seed.
   const [hidden, setHidden] = useState<Hidden>(() => extractHidden(initialPlan));
+  // Rows the user has marked as already paid this month.
+  const [paid, setPaid] = useState<Hidden>(() => extractPaid(initialPlan));
   // User-created tables (sections), reconstructed from the loaded plan.
   const [customTables, setCustomTables] = useState<CustomTable[]>(() =>
     extractTables(initialPlan),
@@ -888,6 +917,19 @@ export default function BudgetSheet({
     name: string;
   } | null>(null);
 
+  // Table pending a "copy to next month", confirmed via a modal (null = none).
+  const [pendingCopy, setPendingCopy] = useState<{
+    id: string;
+    title: string;
+  } | null>(null);
+  // Transient status message shown after a copy-to-next-month action.
+  const [copyNotice, setCopyNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!copyNotice) return;
+    const t = setTimeout(() => setCopyNotice(null), 3500);
+    return () => clearTimeout(t);
+  }, [copyNotice]);
+
   // Section id whose "Add row" modal is currently open (null = closed).
   const [modalSection, setModalSection] = useState<string | null>(null);
   // Row currently being edited via the modal (null = not editing).
@@ -905,6 +947,7 @@ export default function BudgetSheet({
         mode: "edit-builtin";
         id: string;
         current: { title: string; showDue: boolean; showType: boolean };
+        lockColumns?: boolean;
       }
     | null
   >(null);
@@ -916,6 +959,7 @@ export default function BudgetSheet({
     (k) =>
       !k.startsWith("meta:") &&
       !k.startsWith("hidden:") &&
+      !k.startsWith("paid:") &&
       !k.startsWith("table:") &&
       !k.startsWith("override:"),
   );
@@ -953,7 +997,7 @@ export default function BudgetSheet({
     saveTimer.current = setTimeout(() => {
       saveBudgetPlan(
         month,
-        flatten(values, customRows, hidden, customTables, sectionOverrides),
+        flatten(values, customRows, hidden, customTables, sectionOverrides, paid),
       ).catch(() => {
         // Ignore transient save errors; the next edit retries.
       });
@@ -961,7 +1005,7 @@ export default function BudgetSheet({
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [values, customRows, hidden, customTables, sectionOverrides, month]);
+  }, [values, customRows, hidden, customTables, sectionOverrides, paid, month]);
 
   // Switch months: flush the current month immediately (keepalive lets the PUT
   // finish after we navigate), then move to the new month's URL. The page
@@ -973,7 +1017,7 @@ export default function BudgetSheet({
     if (hasInitialData || edited) {
       saveBudgetPlan(
         month,
-        flatten(values, customRows, hidden, customTables, sectionOverrides),
+        flatten(values, customRows, hidden, customTables, sectionOverrides, paid),
       ).catch(() => {});
     }
     router.push(`/budget?month=${addMonths(month, delta)}`);
@@ -1034,6 +1078,17 @@ export default function BudgetSheet({
     setValues((prev) => {
       const next = { ...prev, [sectionId]: { ...(prev[sectionId] ?? {}) } };
       delete next[sectionId][rowId];
+      return next;
+    });
+  }
+
+  // Toggle a row's "paid" marker for this month.
+  function togglePaid(sectionId: string, rowId: string) {
+    setEdited(true);
+    setPaid((prev) => {
+      const next: Hidden = { ...prev, [sectionId]: new Set(prev[sectionId]) };
+      if (next[sectionId].has(rowId)) next[sectionId].delete(rowId);
+      else next[sectionId].add(rowId);
       return next;
     });
   }
@@ -1151,6 +1206,62 @@ export default function BudgetSheet({
     setModalTable(null);
   }
 
+  // The display title for a section id (built-in override or custom table).
+  function sectionTitle(id: string): string {
+    if (id === "variable") {
+      return sectionOverrides.variable?.title ?? "Variable Kosten";
+    }
+    const s = SECTIONS.find((x) => x.id === id);
+    if (s) return effectiveSection(s).title;
+    return customTables.find((t) => t.id === id)?.title ?? id;
+  }
+
+  // Open the confirm dialog for copying a table's rows into next month.
+  function requestCopy(id: string) {
+    setPendingCopy({ id, title: sectionTitle(id) });
+  }
+
+  // Copy one table's rows (and its definition/overrides) into next month's plan,
+  // replacing whatever that table currently holds there. The rest of next
+  // month's plan is preserved. Uses the live state so unsaved edits are included.
+  async function copyTableToNextMonth(id: string) {
+    const nextMonth = addMonths(month, 1);
+    // Copy with no paid markers (empty paid) so copied rows start unpaid.
+    const full = flatten(
+      values,
+      customRows,
+      hidden,
+      customTables,
+      sectionOverrides,
+      {},
+    );
+    const belongs = (key: string) =>
+      key === `table:${id}` ||
+      key === `override:${id}` ||
+      key.startsWith(`${id}:`) ||
+      key.startsWith(`hidden:${id}:`) ||
+      key.startsWith(`paid:${id}:`);
+    try {
+      const existing = await getBudgetPlan(nextMonth);
+      const merged: BudgetPlan = {};
+      for (const key of Object.keys(existing)) {
+        if (!belongs(key)) merged[key] = existing[key];
+      }
+      for (const key of Object.keys(full)) {
+        if (belongs(key)) merged[key] = full[key];
+      }
+      await saveBudgetPlan(nextMonth, merged);
+      setCopyNotice(
+        `Copied “${sectionTitle(id)}” to ${monthLabel(nextMonth, {
+          month: "long",
+          year: "numeric",
+        })}.`,
+      );
+    } catch {
+      setCopyNotice("Couldn’t copy to next month. Please try again.");
+    }
+  }
+
   // Delete a custom table and everything tied to it.
   function deleteTable(id: string) {
     setEdited(true);
@@ -1226,8 +1337,10 @@ export default function BudgetSheet({
   }
 
   // Open the edit-table modal for a built-in section, pre-filled with its
-  // effective title and column settings.
-  function editBuiltin(base: Section) {
+  // effective title and column settings. `lockColumns` hides the Type/Due
+  // toggles for sections with a fixed layout (e.g. Variable Kosten) so only the
+  // name can be changed.
+  function editBuiltin(base: Section, lockColumns = false) {
     const eff = effectiveSection(base);
     setModalTable({
       mode: "edit-builtin",
@@ -1237,6 +1350,7 @@ export default function BudgetSheet({
         showDue: eff.showDue,
         showType: eff.showType !== false,
       },
+      lockColumns,
     });
   }
 
@@ -1245,7 +1359,7 @@ export default function BudgetSheet({
   function sectionConfig(sectionId: string) {
     if (sectionId === "variable") {
       return {
-        title: "Variable Kosten",
+        title: sectionOverrides.variable?.title ?? "Variable Kosten",
         amountLabel: "Soll (€)",
         showDue: false,
         showType: true,
@@ -1420,7 +1534,7 @@ export default function BudgetSheet({
           </div>
 
           <Link
-            href="/income"
+            href={`/income?month=${month}`}
             className="group block rounded-xl border border-amber-900/20 bg-white p-6 shadow-sm transition-colors hover:border-amber-700/40 hover:bg-amber-900/5"
           >
             <div className="flex items-start justify-between">
@@ -1483,13 +1597,16 @@ export default function BudgetSheet({
           amounts={values[SECTIONS[0].id] ?? {}}
           custom={customRows[SECTIONS[0].id] ?? []}
           hidden={hidden[SECTIONS[0].id]}
+          paid={paid[SECTIONS[0].id]}
           typeOptions={typesFor(SECTIONS[0].id)}
           onAddRow={setModalSection}
           onDeleteRow={deleteRow}
           onEditRow={editRow}
           onStartEdit={startEdit}
+          onTogglePaid={togglePaid}
           onAddType={(v) => addTypeOption(SECTIONS[0].id, v)}
           onEditTable={() => editBuiltin(SECTIONS[0])}
+          onCopyNext={() => requestCopy(SECTIONS[0].id)}
         />
 
         <VariableSection
@@ -1499,12 +1616,26 @@ export default function BudgetSheet({
           hidden={hidden.variable}
           total={variableTotal}
           istByCategory={istByCategory}
+          title={sectionTitle("variable")}
           onAddRow={() => setModalSection("variable")}
           onDeleteRow={(rowId) => deleteRow("variable", rowId)}
           onStartEdit={(row, isBuiltin, amount) =>
             startEdit("variable", row, isBuiltin, amount)
           }
           onAddType={(v) => addTypeOption("variable", v)}
+          onEditTable={() =>
+            editBuiltin(
+              {
+                id: "variable",
+                title: "Variable Kosten",
+                showDue: false,
+                showType: true,
+                rows: [],
+              },
+              true,
+            )
+          }
+          onCopyNext={() => requestCopy("variable")}
         />
 
         {SECTIONS.slice(1).map((section) => (
@@ -1514,13 +1645,16 @@ export default function BudgetSheet({
             amounts={values[section.id] ?? {}}
             custom={customRows[section.id] ?? []}
             hidden={hidden[section.id]}
+            paid={paid[section.id]}
             typeOptions={typesFor(section.id)}
             onAddRow={setModalSection}
             onDeleteRow={deleteRow}
             onEditRow={editRow}
             onStartEdit={startEdit}
+            onTogglePaid={togglePaid}
             onAddType={(v) => addTypeOption(section.id, v)}
             onEditTable={() => editBuiltin(section)}
+            onCopyNext={() => requestCopy(section.id)}
           />
         ))}
 
@@ -1538,14 +1672,17 @@ export default function BudgetSheet({
             amounts={values[t.id] ?? {}}
             custom={customRows[t.id] ?? []}
             hidden={hidden[t.id]}
+            paid={paid[t.id]}
             typeOptions={typesFor(t.id)}
             onAddRow={setModalSection}
             onDeleteRow={deleteRow}
             onEditRow={editRow}
             onStartEdit={startEdit}
+            onTogglePaid={togglePaid}
             onAddType={(v) => addTypeOption(t.id, v)}
             onEditTable={() => setModalTable({ mode: "edit", table: t })}
             onDeleteTable={() => deleteTable(t.id)}
+            onCopyNext={() => requestCopy(t.id)}
           />
         ))}
 
@@ -1647,6 +1784,9 @@ export default function BudgetSheet({
       {modalTable && (
         <TableModal
           mode={modalTable.mode === "add" ? "add" : "edit"}
+          lockColumns={
+            modalTable.mode === "edit-builtin" ? modalTable.lockColumns : false
+          }
           initial={
             modalTable.mode === "edit"
               ? modalTable.table
@@ -1687,6 +1827,34 @@ export default function BudgetSheet({
         }}
         onCancel={() => setPendingDeleteType(null)}
       />
+
+      <ConfirmDialog
+        open={pendingCopy !== null}
+        title="Copy to next month?"
+        message={
+          pendingCopy
+            ? `“${pendingCopy.title}” and its rows will be copied into ${monthLabel(
+                addMonths(month, 1),
+                { month: "long", year: "numeric" },
+              )}, replacing that table’s current contents for that month.`
+            : ""
+        }
+        confirmLabel="Copy"
+        onConfirm={() => {
+          if (pendingCopy) void copyTableToNextMonth(pendingCopy.id);
+          setPendingCopy(null);
+        }}
+        onCancel={() => setPendingCopy(null)}
+      />
+
+      {copyNotice && (
+        <div
+          role="status"
+          className="fixed bottom-6 left-1/2 z-70 -translate-x-1/2 rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white shadow-xl"
+        >
+          {copyNotice}
+        </div>
+      )}
     </main>
   );
 }
@@ -1697,10 +1865,12 @@ function TableMenu({
   title,
   onEdit,
   onDelete,
+  onCopyNext,
 }: {
   title: string;
   onEdit?: () => void;
   onDelete?: () => void;
+  onCopyNext?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -1781,7 +1951,39 @@ function TableMenu({
               Edit table
             </button>
           )}
-          {onEdit && onDelete && (
+          {onEdit && onCopyNext && (
+            <div className="my-1 h-px bg-amber-900/10" />
+          )}
+          {onCopyNext && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onCopyNext();
+              }}
+              className="group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-zinc-700 transition-colors hover:bg-amber-900/5"
+            >
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-100/70 text-amber-800 transition-colors group-hover:bg-amber-900/10">
+                <svg
+                  width={14}
+                  height={14}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <rect x="9" y="9" width="13" height="13" rx="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+              </span>
+              Copy to next month
+            </button>
+          )}
+          {(onEdit || onCopyNext) && onDelete && (
             <div className="my-1 h-px bg-amber-900/10" />
           )}
           {onDelete && (
@@ -1825,19 +2027,23 @@ function CostSection({
   amounts,
   custom,
   hidden,
+  paid,
   typeOptions,
   onAddRow,
   onDeleteRow,
   onEditRow,
   onStartEdit,
+  onTogglePaid,
   onAddType,
   onEditTable,
   onDeleteTable,
+  onCopyNext,
 }: {
   section: Section;
   amounts: Record<string, string>;
   custom: Row[];
   hidden?: Set<string>;
+  paid?: Set<string>;
   typeOptions: string[];
   onAddRow: (sectionId: string) => void;
   onDeleteRow: (sectionId: string, rowId: string) => void;
@@ -1848,15 +2054,24 @@ function CostSection({
     isBuiltin: boolean,
     amount: string,
   ) => void;
+  onTogglePaid?: (sectionId: string, rowId: string) => void;
   onAddType: (value: string) => void;
   onEditTable?: () => void;
   onDeleteTable?: () => void;
+  onCopyNext?: () => void;
 }) {
   const builtinRows = section.rows.filter((r) => !hidden?.has(r.id));
   const total =
     sumSection(builtinRows, amounts) +
     custom.reduce((t, r) => t + Number(amounts[r.id] || 0), 0);
   const itemCount = builtinRows.length + custom.length;
+  // Paid progress for this month: how many rows (and how much) are settled.
+  const allRows = [...builtinRows, ...custom];
+  const paidCount = allRows.filter((r) => paid?.has(r.id)).length;
+  const paidTotal = allRows
+    .filter((r) => paid?.has(r.id))
+    .reduce((t, r) => t + Number(amounts[r.id] || 0), 0);
+  const outstanding = total - paidTotal;
   const showType = section.showType !== false;
   // Category + Budget, plus optional Type/Due columns, plus the actions column.
   const colCount = 2 + (showType ? 1 : 0) + (section.showDue ? 1 : 0) + 1;
@@ -1868,17 +2083,26 @@ function CostSection({
           <h2 className="text-lg font-semibold text-zinc-900">
             {section.title}
           </h2>
-          <p className="text-sm text-amber-900/60">{itemCount} items</p>
+          <p className="text-sm text-amber-900/60">
+            {itemCount} items
+            {paidCount > 0 && (
+              <span className="text-emerald-700">
+                {" "}
+                · {paidCount}/{itemCount} paid
+              </span>
+            )}
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <div className="text-2xl font-semibold tabular-nums text-zinc-900">
             {currency.format(total)}
           </div>
-          {(onEditTable || onDeleteTable) && (
+          {(onEditTable || onDeleteTable || onCopyNext) && (
             <TableMenu
               title={section.title}
               onEdit={onEditTable}
               onDelete={onDeleteTable}
+              onCopyNext={onCopyNext}
             />
           )}
         </div>
@@ -1917,64 +2141,102 @@ function CostSection({
             </tr>
           ) : (
             <>
-              {builtinRows.map((r) => (
-                <tr key={r.id} className="group hover:bg-amber-900/5">
-                  {showType && (
-                    <td className="px-5 py-2 text-amber-900/70">{r.type}</td>
-                  )}
-                  <td className="px-3 py-2 font-medium">{r.category}</td>
-                  <td className="px-3 py-2 text-center font-semibold tabular-nums text-zinc-900">
-                    {displayAmount(amounts[r.id])}
-                  </td>
-                  {section.showDue && (
-                    <td className="px-5 py-2 text-amber-900/70 tabular-nums">
-                      {r.due || "—"}
+              {builtinRows.map((r) => {
+                const isPaid = paid?.has(r.id) ?? false;
+                return (
+                  <tr
+                    key={r.id}
+                    className={`group ${isPaid ? "bg-emerald-50/50 hover:bg-emerald-50" : "hover:bg-amber-900/5"}`}
+                  >
+                    {showType && (
+                      <td className="px-5 py-2 text-amber-900/70">{r.type}</td>
+                    )}
+                    <td className="px-3 py-2 font-medium">
+                      <span className="inline-flex items-center gap-2">
+                        {r.category}
+                        {isPaid && <PaidBadge />}
+                      </span>
                     </td>
-                  )}
-                  <td className="px-3 py-2 text-right">
-                    <RowActions
-                      onEdit={() =>
-                        onStartEdit(section.id, r, true, amounts[r.id] ?? "")
-                      }
-                      onDelete={() => onDeleteRow(section.id, r.id)}
-                      label={r.category || "row"}
-                    />
-                  </td>
-                </tr>
-              ))}
-              {custom.map((r) => (
-                <tr key={r.id} className="group hover:bg-amber-900/5">
-                  {showType && (
-                    <td className="px-5 py-2 text-amber-900/70">{r.type}</td>
-                  )}
-                  <td className="px-3 py-2 font-medium">{r.category}</td>
-                  <td className="px-3 py-2 text-center font-semibold tabular-nums text-zinc-900">
-                    {displayAmount(amounts[r.id])}
-                  </td>
-                  {section.showDue && (
-                    <td className="px-5 py-2">
-                      <input
-                        type="text"
-                        placeholder="dd/mm/yyyy"
-                        value={r.due ?? ""}
-                        onChange={(e) =>
-                          onEditRow(section.id, r.id, { due: e.target.value })
+                    <td
+                      className={`px-3 py-2 text-center font-semibold tabular-nums ${isPaid ? "text-emerald-700" : "text-zinc-900"}`}
+                    >
+                      {displayAmount(amounts[r.id])}
+                    </td>
+                    {section.showDue && (
+                      <td className="px-5 py-2 text-amber-900/70 tabular-nums">
+                        {r.due || "—"}
+                      </td>
+                    )}
+                    <td className="px-3 py-2 text-right">
+                      <RowActions
+                        paid={isPaid}
+                        onTogglePaid={
+                          onTogglePaid
+                            ? () => onTogglePaid(section.id, r.id)
+                            : undefined
                         }
-                        className="w-32 rounded-md bg-transparent px-2 py-1 text-sm text-amber-900/70 tabular-nums hover:bg-amber-900/5 focus:bg-amber-50 focus:outline-none"
+                        onEdit={() =>
+                          onStartEdit(section.id, r, true, amounts[r.id] ?? "")
+                        }
+                        onDelete={() => onDeleteRow(section.id, r.id)}
+                        label={r.category || "row"}
                       />
                     </td>
-                  )}
-                  <td className="px-3 py-2 text-right">
-                    <RowActions
-                      onEdit={() =>
-                        onStartEdit(section.id, r, false, amounts[r.id] ?? "")
-                      }
-                      onDelete={() => onDeleteRow(section.id, r.id)}
-                      label={r.category || "row"}
-                    />
-                  </td>
-                </tr>
-              ))}
+                  </tr>
+                );
+              })}
+              {custom.map((r) => {
+                const isPaid = paid?.has(r.id) ?? false;
+                return (
+                  <tr
+                    key={r.id}
+                    className={`group ${isPaid ? "bg-emerald-50/50 hover:bg-emerald-50" : "hover:bg-amber-900/5"}`}
+                  >
+                    {showType && (
+                      <td className="px-5 py-2 text-amber-900/70">{r.type}</td>
+                    )}
+                    <td className="px-3 py-2 font-medium">
+                      <span className="inline-flex items-center gap-2">
+                        {r.category}
+                        {isPaid && <PaidBadge />}
+                      </span>
+                    </td>
+                    <td
+                      className={`px-3 py-2 text-center font-semibold tabular-nums ${isPaid ? "text-emerald-700" : "text-zinc-900"}`}
+                    >
+                      {displayAmount(amounts[r.id])}
+                    </td>
+                    {section.showDue && (
+                      <td className="px-5 py-2">
+                        <input
+                          type="text"
+                          placeholder="dd/mm/yyyy"
+                          value={r.due ?? ""}
+                          onChange={(e) =>
+                            onEditRow(section.id, r.id, { due: e.target.value })
+                          }
+                          className="w-32 rounded-md bg-transparent px-2 py-1 text-sm text-amber-900/70 tabular-nums hover:bg-amber-900/5 focus:bg-amber-50 focus:outline-none"
+                        />
+                      </td>
+                    )}
+                    <td className="px-3 py-2 text-right">
+                      <RowActions
+                        paid={isPaid}
+                        onTogglePaid={
+                          onTogglePaid
+                            ? () => onTogglePaid(section.id, r.id)
+                            : undefined
+                        }
+                        onEdit={() =>
+                          onStartEdit(section.id, r, false, amounts[r.id] ?? "")
+                        }
+                        onDelete={() => onDeleteRow(section.id, r.id)}
+                        label={r.category || "row"}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
             </>
           )}
           <AddRow colSpan={colCount} onClick={() => onAddRow(section.id)} />
@@ -1986,6 +2248,12 @@ function CostSection({
               colSpan={showType ? 2 : 1}
             >
               Total {section.title}
+              {paidTotal > 0 && (
+                <span className="ml-2 text-xs font-medium text-amber-900/60">
+                  {currency.format(paidTotal)} paid ·{" "}
+                  {currency.format(outstanding)} outstanding
+                </span>
+              )}
             </td>
             <td className="px-3 py-3 text-center font-semibold tabular-nums text-emerald-700">
               {currency.format(total)}
@@ -2007,10 +2275,13 @@ function VariableSection({
   hidden,
   total,
   istByCategory,
+  title,
   onAddRow,
   onDeleteRow,
   onStartEdit,
   onAddType,
+  onEditTable,
+  onCopyNext,
 }: {
   rows: Row[];
   amounts: Record<string, string>;
@@ -2018,10 +2289,13 @@ function VariableSection({
   hidden?: Set<string>;
   total: number;
   istByCategory: Record<string, number>;
+  title: string;
   onAddRow: () => void;
   onDeleteRow: (rowId: string) => void;
   onStartEdit: (row: Row, isBuiltin: boolean, amount: string) => void;
   onAddType: (value: string) => void;
+  onEditTable?: () => void;
+  onCopyNext?: () => void;
 }) {
   const builtinRows = rows.filter((r) => !hidden?.has(r.id));
   const itemCount = builtinRows.length + custom.length;
@@ -2045,11 +2319,20 @@ function VariableSection({
     <section className="mb-8 overflow-hidden rounded-xl border border-amber-900/20 bg-white shadow-sm">
       <div className="flex items-start justify-between gap-4 px-5 py-4">
         <div>
-          <h2 className="text-lg font-semibold text-zinc-900">Variable Kosten</h2>
+          <h2 className="text-lg font-semibold text-zinc-900">{title}</h2>
           <p className="text-sm text-amber-900/60">{itemCount} items</p>
         </div>
-        <div className="text-2xl font-semibold tabular-nums text-zinc-900">
-          {currency.format(total)}
+        <div className="flex items-center gap-3">
+          <div className="text-2xl font-semibold tabular-nums text-zinc-900">
+            {currency.format(total)}
+          </div>
+          {(onEditTable || onCopyNext) && (
+            <TableMenu
+              title={title}
+              onEdit={onEditTable}
+              onCopyNext={onCopyNext}
+            />
+          )}
         </div>
       </div>
 
@@ -2367,6 +2650,7 @@ function TableModal({
   initial,
   onClose,
   onSubmit,
+  lockColumns = false,
 }: {
   mode: "add" | "edit";
   initial?: CustomTable;
@@ -2376,6 +2660,9 @@ function TableModal({
     showDue: boolean;
     showType: boolean;
   }) => void;
+  // When true, hide the Type/Due column toggles (for fixed-layout sections like
+  // Variable Kosten) so only the name can be changed.
+  lockColumns?: boolean;
 }) {
   const [title, setTitle] = useState(initial?.title ?? "");
   const [showDue, setShowDue] = useState(initial?.showDue ?? false);
@@ -2420,7 +2707,9 @@ function TableModal({
             </h3>
             <p className="mt-0.5 text-sm text-amber-900/60">
               {mode === "edit"
-                ? "Rename it or turn its columns on and off."
+                ? lockColumns
+                  ? "Rename this table."
+                  : "Rename it or turn its columns on and off."
                 : "Name it and pick its columns."}
             </p>
           </div>
@@ -2460,59 +2749,63 @@ function TableModal({
             />
           </label>
 
-          <button
-            type="button"
-            onClick={() => setShowType((v) => !v)}
-            className="flex items-center justify-between rounded-xl border border-amber-900/15 bg-amber-50/40 px-3.5 py-3 text-left transition-colors hover:border-amber-600/40"
-          >
-            <span>
-              <span className="block text-sm font-medium text-zinc-900">
-                Type column
-              </span>
-              <span className="block text-xs text-amber-900/60">
-                Show a Type column in this table.
-              </span>
-            </span>
-            <span
-              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
-                showType ? "bg-amber-700" : "bg-amber-900/20"
-              }`}
-              aria-hidden="true"
-            >
-              <span
-                className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
-                  showType ? "translate-x-5" : "translate-x-0.5"
-                }`}
-              />
-            </span>
-          </button>
+          {!lockColumns && (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowType((v) => !v)}
+                className="flex items-center justify-between rounded-xl border border-amber-900/15 bg-amber-50/40 px-3.5 py-3 text-left transition-colors hover:border-amber-600/40"
+              >
+                <span>
+                  <span className="block text-sm font-medium text-zinc-900">
+                    Type column
+                  </span>
+                  <span className="block text-xs text-amber-900/60">
+                    Show a Type column in this table.
+                  </span>
+                </span>
+                <span
+                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                    showType ? "bg-amber-700" : "bg-amber-900/20"
+                  }`}
+                  aria-hidden="true"
+                >
+                  <span
+                    className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                      showType ? "translate-x-5" : "translate-x-0.5"
+                    }`}
+                  />
+                </span>
+              </button>
 
-          <button
-            type="button"
-            onClick={() => setShowDue((v) => !v)}
-            className="flex items-center justify-between rounded-xl border border-amber-900/15 bg-amber-50/40 px-3.5 py-3 text-left transition-colors hover:border-amber-600/40"
-          >
-            <span>
-              <span className="block text-sm font-medium text-zinc-900">
-                Due-date column
-              </span>
-              <span className="block text-xs text-amber-900/60">
-                Show a Fälligkeitsdatum column in this table.
-              </span>
-            </span>
-            <span
-              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
-                showDue ? "bg-amber-700" : "bg-amber-900/20"
-              }`}
-              aria-hidden="true"
-            >
-              <span
-                className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
-                  showDue ? "translate-x-5" : "translate-x-0.5"
-                }`}
-              />
-            </span>
-          </button>
+              <button
+                type="button"
+                onClick={() => setShowDue((v) => !v)}
+                className="flex items-center justify-between rounded-xl border border-amber-900/15 bg-amber-50/40 px-3.5 py-3 text-left transition-colors hover:border-amber-600/40"
+              >
+                <span>
+                  <span className="block text-sm font-medium text-zinc-900">
+                    Due-date column
+                  </span>
+                  <span className="block text-xs text-amber-900/60">
+                    Show a Fälligkeitsdatum column in this table.
+                  </span>
+                </span>
+                <span
+                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                    showDue ? "bg-amber-700" : "bg-amber-900/20"
+                  }`}
+                  aria-hidden="true"
+                >
+                  <span
+                    className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                      showDue ? "translate-x-5" : "translate-x-0.5"
+                    }`}
+                  />
+                </span>
+              </button>
+            </>
+          )}
 
           <button
             type="submit"
@@ -2584,16 +2877,89 @@ function RowActions({
   onEdit,
   onDelete,
   label,
+  paid,
+  onTogglePaid,
 }: {
   onEdit: () => void;
   onDelete: () => void;
   label: string;
+  paid?: boolean;
+  onTogglePaid?: () => void;
 }) {
   return (
-    <div className="flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-      <EditButton onClick={onEdit} label={`Edit ${label}`} />
-      <DeleteButton onClick={onDelete} label={`Delete ${label}`} />
+    <div className="flex items-center justify-end gap-1">
+      {onTogglePaid && (
+        <PaidToggle paid={!!paid} onClick={onTogglePaid} label={label} />
+      )}
+      <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+        <EditButton onClick={onEdit} label={`Edit ${label}`} />
+        <DeleteButton onClick={onDelete} label={`Delete ${label}`} />
+      </div>
     </div>
+  );
+}
+
+// Small green pill shown next to a row's category once it's marked paid.
+function PaidBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+      <svg
+        width={11}
+        height={11}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={3}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <polyline points="20 6 9 17 4 12" />
+      </svg>
+      Paid
+    </span>
+  );
+}
+
+// Round checkbox that marks a row as paid for the current month. Always visible
+// (unlike edit/delete) so the paid status reads at a glance.
+function PaidToggle({
+  paid,
+  onClick,
+  label,
+}: {
+  paid: boolean;
+  onClick: () => void;
+  label: string;
+}) {
+  const text = paid ? `Mark ${label} as unpaid` : `Mark ${label} as paid`;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={text}
+      aria-pressed={paid}
+      title={text}
+      className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition-colors ${
+        paid
+          ? "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"
+          : "border-amber-900/25 text-transparent hover:border-emerald-500 hover:text-emerald-500"
+      }`}
+    >
+      <svg
+        width={14}
+        height={14}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={3}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <polyline points="20 6 9 17 4 12" />
+      </svg>
+    </button>
   );
 }
 
